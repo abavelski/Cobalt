@@ -1326,6 +1326,14 @@ mod responsive_profile_tests {
                 );
             }
             if name == "libra-h2o-384 portrait" {
+                assert!(
+                    frame.rect.y < metrics.height / 6,
+                    "board should start near the top"
+                );
+                assert!(
+                    frame.rect.y + frame.rect.height < metrics.height * 4 / 5,
+                    "board should leave room for puzzle controls and notes"
+                );
                 let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
                 render_with(
                     &screen,
@@ -8544,7 +8552,7 @@ fn layout_node(
             } else {
                 0
             };
-            let mut grid_y = y;
+            let grid_y = y;
             let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
             if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
                 let rows = i32::try_from(
@@ -8561,10 +8569,9 @@ fn layout_node(
                     cell_width = cell_width
                         .min((width - frame_gutter * 2) / columns)
                         .min((bottom - grid_y - frame_gutter * 2) / rows);
-                    // Keep the board at its full panel-fit size and center the
-                    // complete frame vertically within the available content.
-                    let frame_height = cell_width * 8 + frame_gutter * 2;
-                    grid_y = grid_y.saturating_add((bottom - grid_y - frame_height).max(0) / 2);
+                    // Leave room below the board for the puzzle toolbar and
+                    // explanations. The board stays at the top of the flow.
+                    cell_width = cell_width.saturating_mul(9) / 10;
                 }
                 // A printed crossword square is about a centimetre across
                 // whether the puzzle is a five square mini or a fifteen square

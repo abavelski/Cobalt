@@ -72,17 +72,17 @@ impl ChessBoardApp {
                 self.positions.len()
             )
         };
-        let mut screen = ScreenBuilder::new("chessboard").top_bar(title);
+        let mut screen = ScreenBuilder::new("chessboard")
+            .top_bar(title)
+            .top_bar_glyph(EXIT, "Return to Kobo reader", Glyph::Close)
+            .board_with_selection(SIDE as u8, cells);
+        if !self.sleeping {
+            screen = screen.buttons([(RESET, "Reset")]);
+        }
         if let Some(error) = self.file_error.as_ref() {
             screen = screen.text(error.clone());
         }
-        if !self.sleeping {
-            screen = screen.top_bar_action(RESET, "Reset");
-        }
-        screen
-            .board_with_selection(SIDE as u8, cells)
-            .bottom_action(EXIT, "Return to Kobo reader")
-            .build()
+        screen.build()
     }
 
     fn turn_position(&mut self, context: &mut Context, forward: bool) {
