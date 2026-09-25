@@ -1822,7 +1822,13 @@ fn host_applications(
                 } else if now >= due {
                     pending_suspend = None;
                     let source = kobo_hal::power_source::read();
-                    if source.external != Some(false) || source.usb == Some(true) {
+                    if kernel_suspend_requires_unplugged(display.profile().framebuffer_controller)
+                        && (source.external != Some(false) || source.usb == Some(true))
+                    {
+                        trace(&format!(
+                            "kernel suspend cancelled by external power: external={:?}, usb={:?}",
+                            source.external, source.usb
+                        ));
                         if let Some(effect) = power.abort(kobod::power::Refusal::Charging) {
                             apply_power_effect(&mut apps, effect)?;
                         }
@@ -1844,8 +1850,22 @@ fn host_applications(
                                 }
                             }
                         }
+                        match Command::new("sync").status() {
+                            Ok(status) if status.success() => trace("kernel suspend: filesystems synced"),
+                            Ok(status) => trace(&format!(
+                                "kernel suspend: sync exited with {status}; continuing"
+                            )),
+                            Err(error) => trace(&format!(
+                                "kernel suspend: could not run sync ({error}); continuing"
+                            )),
+                        }
+                        trace("kernel suspend: entering mem");
+                        let suspend_started = Instant::now();
                         let outcome = fs::write(SUSPEND_STATE, "mem");
-                        let _ = fs::write(SUSPEND_FLAG, "0");
+                        trace(&format!(
+                            "kernel suspend: mem write returned after {} ms",
+                            suspend_started.elapsed().as_millis()
+                        ));
                         if let (Some(light), Some(level)) = (&frontlight, light_before) {
                             if level > 0 {
                                 match light.set(level) {
@@ -2123,15 +2143,21 @@ fn host_applications(
                                         trace("power button sleep unavailable on this kernel");
                                         continue;
                                     }
+                                    let source = kobo_hal::power_source::read();
+                                    trace(&format!(
+                                        "power button sleep source: external={:?}, usb={:?}",
+                                        source.external, source.usb
+                                    ));
                                     match begin_power(
                                         &mut power,
                                         &apps,
                                         navigation_millis,
                                         kobod::power::SleepReason::PowerButton,
-                                        power_conditions(
+                                        kernel_suspend_conditions(
                                             &apps,
                                             touch,
-                                            kobo_hal::power_source::read(),
+                                            source,
+                                            display.profile().framebuffer_controller,
                                         ),
                                     ) {
                                         Ok(effect) => {
@@ -3163,7 +3189,14 @@ fn host_applications(
             }
             if power.state() == kobod::power::State::Preparing {
                 let source = kobo_hal::power_source::read();
-                let wake = if source.usb == Some(true) {
+                let button_sleep = power.reason() == Some(kobod::power::SleepReason::PowerButton);
+                let powered_kernel_suspend = button_sleep
+                    && !kernel_suspend_requires_unplugged(
+                        display.profile().framebuffer_controller,
+                    );
+                let wake = if powered_kernel_suspend {
+                    None
+                } else if source.usb == Some(true) {
                     Some(kobod::power::WakeReason::Usb)
                 } else if source.external == Some(true) {
                     Some(kobod::power::WakeReason::Charging)
@@ -3174,11 +3207,19 @@ fn host_applications(
                     apply_power_effect(&mut apps, effect)?;
                     last_activity = Instant::now();
                 }
-                let mut conditions = power_conditions(&apps, touch, source);
+                let mut conditions = if button_sleep {
+                    kernel_suspend_conditions(
+                        &apps,
+                        touch,
+                        source,
+                        display.profile().framebuffer_controller,
+                    )
+                } else {
+                    power_conditions(&apps, touch, source)
+                };
                 if conditions.tasks_idle {
                     conditions.panel_idle = display.finish_pending().is_ok();
                 }
-                let button_sleep = power.reason() == Some(kobod::power::SleepReason::PowerButton);
                 if let Some(effect) = power.poll(navigation_millis, conditions, button_sleep) {
                     if let kobod::power::Effect::Enter { generation } = effect {
                         if let Err(error) = fs::write(SUSPEND_FLAG, "1") {
@@ -3223,7 +3264,13 @@ fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Resu
             }
         }
         Effect::Resume { generation, reason } => {
-            let _ = fs::write(SUSPEND_FLAG, "0");
+            if let Err(error) = fs::write(SUSPEND_FLAG, "0") {
+                trace(&format!("kernel resume flag failed: {error}"));
+            } else if reason == kobod::power::WakeReason::PowerButton {
+                // KOReader and Nickel both give the i.MX6 power glue a moment
+                // to re-arm wake/input state after clearing state-extended.
+                thread::sleep(Duration::from_millis(100));
+            }
             for app in apps.iter_mut() {
                 app.tasks.resume();
             }
@@ -3268,7 +3315,7 @@ fn power_conditions(
     kobod::power::Conditions {
         charging: source.external != Some(false),
         // This observation describes USB power, not mass-storage ownership.
-        // Unknown USB cannot authorize kernel sleep; this host only hands back.
+        // Unknown USB cannot authorize an ordinary handback/power transition.
         usb_attached: source.usb == Some(true),
         keep_awake_until: 0, // KeepAwake is not a declared native backend.
         terminal_open: apps.iter().any(|app| app.shells.is_open()),
@@ -3276,6 +3323,35 @@ fn power_conditions(
         panel_idle: false, // Replaced only after the display completion fence.
         tasks_idle: apps.iter().all(|app| app.tasks.is_quiescent()),
     }
+}
+
+/// MediaTek Kobo kernels are known to hang if suspend is attempted while
+/// externally powered. The i.MX6 Kobo path used by Libra H2O does not have
+/// that restriction; Nickel/KOReader suspend those devices with the normal
+/// state-extended -> mem sequence even when the battery reports Full.
+///
+/// Keeping this decision at the hardware boundary matters because
+/// power_source::Observation intentionally treats Battery/Full as external
+/// power. That is conservative for generic policy, but it must not turn a
+/// fully charged, unplugged i.MX6 reader into a device that can never sleep.
+fn kernel_suspend_requires_unplugged(
+    controller: kobo_profile::FramebufferController,
+) -> bool {
+    matches!(controller, kobo_profile::FramebufferController::Hwtcon)
+}
+
+fn kernel_suspend_conditions(
+    apps: &[Hosted],
+    touch: &TouchSink,
+    source: kobo_hal::power_source::Observation,
+    controller: kobo_profile::FramebufferController,
+) -> kobod::power::Conditions {
+    let mut conditions = power_conditions(apps, touch, source);
+    if !kernel_suspend_requires_unplugged(controller) {
+        conditions.charging = false;
+        conditions.usb_attached = false;
+    }
+    conditions
 }
 
 fn index_of(apps: &[Hosted], id: u64) -> Option<usize> {
