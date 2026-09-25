@@ -1,0 +1,12 @@
+[package]
+name = "kobo-eink-chess"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[lints]
+workspace = true

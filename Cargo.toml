@@ -47,6 +47,7 @@ members = [
     "examples/rss",
     "examples/todo",
     "examples/tictactoe",
+    "examples/eink-chess",
     "examples/terminal",
     "examples/gallery",
     "examples/gutenbird",

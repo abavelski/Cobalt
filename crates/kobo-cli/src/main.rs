@@ -93,6 +93,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-gutenbird", None),
     ("kobo-gallery", None),
     ("kobo-tictactoe", None),
+    ("kobo-eink-chess", None),
     ("kobo-magnet", None),
     ("kobo-hn", None),
     ("kobo-rss", None),
@@ -248,7 +249,7 @@ if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
     mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
 fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
-  exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
+  exec \"$root/bin/kobod\" --present \"$root/bin/kobo-eink-chess\" > /mnt/onboard/kobod.txt 2>&1
 ";
 
 /// Shipped inside the package, because the thing an owner most needs to find

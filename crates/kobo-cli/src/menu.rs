@@ -115,7 +115,7 @@ pub fn config(_install_folder: &str) -> String {
          #\n\
          # Starting Cobalt stops the reader and takes over the screen. Restart\n\
          # the device to get the reader back.\n\
-         menu_item :main :Cobalt :cmd_spawn :quiet:{}\n",
+         menu_item :main :E-Ink Chess :cmd_spawn :quiet:{}\n",
         crate::bootstrap::DEVICE_PATH
     )
 }

@@ -245,6 +245,7 @@ impl DeviceServices {
                 self.awake_held_for = None;
                 DeviceResult::Done
             }
+            DeviceRequest::SleepNow => DeviceResult::Denied(DenyReason::Unsupported),
             DeviceRequest::ScheduleWake { seconds } => self.schedule_wake(seconds),
             DeviceRequest::CancelWake => {
                 self.wake_scheduled_in = None;
@@ -677,6 +678,7 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         DeviceRequest::ReadCover => Capability::CoverSensor,
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
         DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
+        DeviceRequest::SleepNow => return None,
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
         DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
             Capability::FrontlightControl

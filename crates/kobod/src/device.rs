@@ -2531,6 +2531,37 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(
                                     kobo_protocol::DenyReason::NotDeclared,
                                 )
+                            } else if matches!(request, kobo_protocol::DeviceRequest::SleepNow) {
+                                if !fs::read_to_string("/sys/power/state").is_ok_and(|states| {
+                                    states.split_whitespace().any(|s| s == "mem")
+                                }) {
+                                    kobo_protocol::DeviceResult::Denied(
+                                        kobo_protocol::DenyReason::Unsupported,
+                                    )
+                                } else {
+                                    match begin_power(
+                                        &mut power,
+                                        &apps,
+                                        navigation_millis,
+                                        kobod::power::SleepReason::Owner,
+                                        power_conditions(
+                                            &apps,
+                                            touch,
+                                            kobo_hal::power_source::read(),
+                                        ),
+                                    ) {
+                                        Ok(effect) => {
+                                            apply_power_effect(&mut apps, effect)?;
+                                            kobo_protocol::DeviceResult::Done
+                                        }
+                                        Err(reason) => {
+                                            trace(&format!("owner sleep refused: {reason:?}"));
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::PolicyRejected,
+                                            )
+                                        }
+                                    }
+                                }
                             } else if let Some(result) = kobo_policy::credentials::handle_install(
                                 Path::new(SECRETS),
                                 &apps[index].name,
@@ -3102,8 +3133,25 @@ fn host_applications(
                 if conditions.tasks_idle {
                     conditions.panel_idle = display.finish_pending().is_ok();
                 }
-                if let Some(effect) = power.poll(navigation_millis, conditions, false) {
-                    if apply_power_effect(&mut apps, effect)? {
+                let owner_sleep = power.reason() == Some(kobod::power::SleepReason::Owner);
+                if let Some(effect) = power.poll(navigation_millis, conditions, owner_sleep) {
+                    if let kobod::power::Effect::Enter { generation } = effect {
+                        if power.entered(generation) {
+                            // E-ink retains the finished frame without power. The
+                            // kernel returns here after the power button wakes it.
+                            let outcome = fs::write("/sys/power/state", "mem");
+                            let resume = if outcome.is_ok() {
+                                power.wake(kobod::power::WakeReason::PowerButton)
+                            } else {
+                                trace(&format!("owner sleep failed: {:?}", outcome.err()));
+                                power.abort(kobod::power::Refusal::Busy)
+                            };
+                            if let Some(resume) = resume {
+                                apply_power_effect(&mut apps, resume)?;
+                            }
+                            last_activity = Instant::now();
+                        }
+                    } else if apply_power_effect(&mut apps, effect)? {
                         return Ok(finish(
                             &apps,
                             &visited,
@@ -3325,6 +3373,7 @@ fn repaint(
 /// identities even while both travel over the same bounded device channel.
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
     match request {
+        kobo_protocol::DeviceRequest::SleepNow => app == "eink-chess",
         kobo_protocol::DeviceRequest::Update { .. }
         | kobo_protocol::DeviceRequest::ReadAutoUpdate
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }

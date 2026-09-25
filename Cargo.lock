@@ -1001,6 +1001,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-eink-chess"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobo-fanshelf"
 version = "0.2.0"
 dependencies = [

@@ -1246,6 +1246,142 @@ mod responsive_profile_tests {
     }
 
     #[test]
+    fn chess_frame_keeps_coordinates_outside_playable_squares() {
+        for (name, metrics) in panels() {
+            let cells = (0..64)
+                .map(|index| {
+                    let cell = Cell::new(ActionId(index + 1), " ");
+                    match index {
+                        0 => cell.with_glyph(Glyph::ChessBlackRook),
+                        63 => cell.with_glyph(Glyph::ChessWhiteRook),
+                        _ => cell,
+                    }
+                })
+                .collect();
+            let screen = Screen::new(
+                1,
+                vec![Node::Grid {
+                    id: NodeId(1),
+                    columns: 8,
+                    square: true,
+                    cells,
+                }],
+            )
+            .with_top_bar(TopBar::new(NodeId(2), "Chess"));
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                !diagnostics.has_errors(),
+                "{name}: {:?}",
+                diagnostics.issues
+            );
+            let frame = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::ChessFrame { .. }))
+                .expect("chess frame");
+            let LayoutKind::ChessFrame { board } = frame.kind else {
+                unreachable!()
+            };
+            let squares: Vec<_> = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .collect();
+            assert_eq!(squares.len(), 64, "{name}");
+            assert_eq!(squares[0].rect.x, board.x, "{name}");
+            assert_eq!(squares[0].rect.y, board.y, "{name}");
+            assert_eq!(
+                squares[63].rect.x + squares[63].rect.width,
+                board.x + board.width,
+                "{name}"
+            );
+            assert_eq!(
+                squares[63].rect.y + squares[63].rect.height,
+                board.y + board.height,
+                "{name}"
+            );
+            assert!(frame.rect.x < board.x && frame.rect.y < board.y, "{name}");
+            assert!(
+                frame.rect.x + frame.rect.width > board.x + board.width,
+                "{name}"
+            );
+            assert!(
+                frame.rect.y + frame.rect.height > board.y + board.height,
+                "{name}"
+            );
+            let mark = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::InlineGlyph(Glyph::ChessBlackRook, _)))
+                .expect("black rook mark");
+            assert_eq!(mark.rect.width, squares[0].rect.width * 4 / 5, "{name}");
+            for (index, square) in squares.iter().enumerate() {
+                assert_eq!(
+                    square.kind.acts_on(),
+                    Some(ActionId(index as u32 + 1)),
+                    "{name}"
+                );
+            }
+            if name == "libra-h2o-384 portrait" {
+                let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+                render_with(
+                    &screen,
+                    &metrics,
+                    &Chrome::measuring(true),
+                    &mut surface,
+                    None,
+                );
+                let pixel = |x: i32, y: i32| surface.pixels[(y * metrics.width + x) as usize];
+                let rule = metrics.rule_thickness();
+                let cell = board.width / 8;
+                for column in 0..8 {
+                    let x = board.x + column * cell + cell / 2;
+                    let y = board.y + column * cell + cell / 2;
+                    assert_eq!(pixel(x, board.y), tone::RULE, "top edge of file {column}");
+                    assert_eq!(
+                        pixel(x, board.y + board.height - 1),
+                        tone::RULE,
+                        "bottom edge of file {column}"
+                    );
+                    assert_ne!(
+                        pixel(x, board.y + board.height - rule - 1),
+                        tone::INK,
+                        "heavy line inside file {column}"
+                    );
+                    assert_eq!(pixel(board.x, y), tone::RULE, "left edge of rank {column}");
+                    assert_eq!(
+                        pixel(board.x + board.width - 1, y),
+                        tone::RULE,
+                        "right edge of rank {column}"
+                    );
+                    assert_ne!(
+                        pixel(board.x + rule, y),
+                        tone::INK,
+                        "heavy line inside rank {column}"
+                    );
+                }
+                let sample_x = board.x + 3 * cell + cell / 2;
+                let sample_y = board.y + 3 * cell + cell / 2;
+                for division in 1..8 {
+                    let line_x = board.x + division * cell;
+                    let line_y = board.y + division * cell;
+                    for offset in 0..rule {
+                        assert_eq!(pixel(line_x + offset, sample_y), tone::RULE);
+                        assert_eq!(pixel(sample_x, line_y + offset), tone::RULE);
+                    }
+                    assert_ne!(pixel(line_x - 1, sample_y), tone::RULE);
+                    assert_ne!(pixel(line_x + rule, sample_y), tone::RULE);
+                    assert_ne!(pixel(sample_x, line_y - 1), tone::RULE);
+                    assert_ne!(pixel(sample_x, line_y + rule), tone::RULE);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn long_document_regions_yield_to_trailing_controls() {
         for (name, metrics) in panels() {
             let screen = Screen::new(
@@ -2554,6 +2690,9 @@ pub enum CellStyle {
     Board,
     /// A shaded playable square on a conventional draughts board.
     BoardDark,
+    /// Chess squares are painted by the board, so shared rules are drawn once.
+    ChessLight,
+    ChessDark,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
@@ -5993,6 +6132,10 @@ pub enum LayoutKind {
     /// with the neighbours above and to the left of them; this closes the two
     /// sides nothing else has drawn.
     CrosswordBoard,
+    /// Frame and rank/file coordinates around an eight by eight chess grid.
+    ChessFrame {
+        board: Rect,
+    },
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -8396,6 +8539,12 @@ fn layout_node(
                 } else {
                     0
                 };
+            let frame_gutter = if chess_board {
+                FontSize::Caption.line_height() + metrics.rule_thickness() * 3
+            } else {
+                0
+            };
+            let mut grid_y = y;
             let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
             if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
                 let rows = i32::try_from(
@@ -8408,6 +8557,15 @@ fn layout_node(
                 let vertical_gaps = gutter * (rows - 1) + ((rows - 1) / 3) * block_extra;
                 let fits_height = bottom.saturating_sub(y).saturating_sub(vertical_gaps) / rows;
                 cell_width = cell_width.min(fits_height.max(metrics.touch_target_minimum()));
+                if chess_board {
+                    cell_width = cell_width
+                        .min((width - frame_gutter * 2) / columns)
+                        .min((bottom - grid_y - frame_gutter * 2) / rows);
+                    // Keep the board at its full panel-fit size and center the
+                    // complete frame vertically within the available content.
+                    let frame_height = cell_width * 8 + frame_gutter * 2;
+                    grid_y = grid_y.saturating_add((bottom - grid_y - frame_height).max(0) / 2);
+                }
                 // A printed crossword square is about a centimetre across
                 // whether the puzzle is a five square mini or a fifteen square
                 // daily. Given the whole panel a small grid stretched every
@@ -8452,15 +8610,23 @@ fn layout_node(
                     .any(|cell| matches!(cell.glyph, Some(Glyph::BoardPoint | Glyph::LegalPoint)));
             let crossword_board = crossword_squares;
             let index = layout.nodes.len();
+            let chess_inner = Rect {
+                x,
+                y: grid_y + frame_gutter,
+                width,
+                height: cell_width * 8,
+            };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
-                    x,
-                    y,
-                    width,
+                    x: x - frame_gutter,
+                    y: grid_y,
+                    width: width + frame_gutter * 2,
                     height: 0,
                 },
-                kind: if backgammon_board {
+                kind: if chess_board {
+                    LayoutKind::ChessFrame { board: chess_inner }
+                } else if backgammon_board {
                     LayoutKind::BackgammonBoard
                 } else if morris_board {
                     LayoutKind::MorrisBoard
@@ -8504,7 +8670,11 @@ fn layout_node(
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
-                } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
+                } else if chess_board && (row + column) % 2 == 1 {
+                    CellStyle::ChessDark
+                } else if chess_board {
+                    CellStyle::ChessLight
+                } else if draughts_board && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
                 } else {
                     style
@@ -8512,7 +8682,9 @@ fn layout_node(
                 rows = row + 1;
                 let rect = Rect {
                     x: x.saturating_add(column * (cell_width + gutter) + column / 3 * block_extra),
-                    y: y.saturating_add(row * (cell_height + gutter) + row / 3 * block_extra),
+                    y: grid_y.saturating_add(
+                        frame_gutter + row * (cell_height + gutter) + row / 3 * block_extra,
+                    ),
                     width: cell_width,
                     height: cell_height,
                 };
@@ -8601,7 +8773,13 @@ fn layout_node(
                             }
                         }
                         Some(glyph) => {
-                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            // Chess pieces use more of their square while
+                            // retaining a safe margin from the border.
+                            let mark = if chess_board {
+                                min(cell_height, cell_width) * 4 / 5
+                            } else {
+                                min(cell_height, cell_width) * 3 / 5
+                            };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
@@ -8647,7 +8825,11 @@ fn layout_node(
                                 rect: letter,
                                 kind: LayoutKind::CellLabel(matches!(
                                     style,
-                                    CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
+                                    CellStyle::Board
+                                        | CellStyle::BoardDark
+                                        | CellStyle::ChessLight
+                                        | CellStyle::ChessDark
+                                        | CellStyle::Crossword
                                 )),
                                 text_lines: vec![cell.label.clone()],
                             });
@@ -8682,8 +8864,8 @@ fn layout_node(
                 };
                 rows * cell_height + (rows - 1) * gutter + block_gaps
             };
-            layout.nodes[index].rect.height = height;
-            y.saturating_add(height)
+            layout.nodes[index].rect.height = height + frame_gutter * 2;
+            grid_y.saturating_add(height + frame_gutter * 2)
         }
         Node::Rows { id, rows } => {
             let padding = metrics.space(Space::Small);
@@ -14469,6 +14651,9 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
+            LayoutKind::ChessFrame { board } => {
+                draw_chess_frame(surface, node.rect, board, metrics, clip);
+            }
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
@@ -14499,6 +14684,17 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
+            LayoutKind::Cell(_, CellStyle::ChessLight | CellStyle::ChessDark, true) => {
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::ChessLight | CellStyle::ChessDark, false) => {}
             LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
                 draw_backgammon_point(surface, node.rect, true, metrics, clip);
             }
@@ -15707,7 +15903,7 @@ fn draw_row_lead(
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
-    draw_vector(surface, &vector::shapes(glyph), rect, clip, tone::INK);
+    draw_glyph_icon_in(surface, glyph, rect, clip, tone::INK);
 }
 
 /// The same, in a chosen tone.
@@ -15716,6 +15912,28 @@ fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) 
 /// not what the row is about, and drawn in full ink beside a title it competes
 /// with the one thing the reader is looking for.
 fn draw_glyph_icon_in(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect, tone: u8) {
+    let size = min(rect.width, rect.height);
+    if let Some(image) = vector::chess_coverage(glyph, size) {
+        let origin_x = rect.x + (rect.width - image.size) / 2;
+        let origin_y = rect.y + (rect.height - image.size) / 2;
+        for row in 0..image.size {
+            for column in 0..image.size {
+                let x = origin_x + column;
+                let y = origin_y + row;
+                if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height
+                {
+                    continue;
+                }
+                let index =
+                    usize::try_from(row * image.size + column).expect("positive chess pixel");
+                let alpha = image.alpha[index];
+                if alpha > 0 {
+                    surface.blend(x, y, image.tone[index], alpha);
+                }
+            }
+        }
+        return;
+    }
     draw_vector(surface, &vector::shapes(glyph), rect, clip, tone);
 }
 
@@ -15851,6 +16069,142 @@ fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
 fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
     if let Some(rect) = rect.intersection(clip) {
         surface.fill_rect(rect, tone);
+    }
+}
+
+fn draw_chess_frame(
+    surface: &mut Surface,
+    outer: Rect,
+    board: Rect,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let rule = metrics.rule_thickness();
+    stroke_clipped(surface, outer, tone::INK, rule, clip);
+    // Place the heavy frame outside the playable squares. Drawing it inside
+    // leaves black ink under the unfilled light squares, while the filled dark
+    // squares cover that ink and make the edge lines alternate in weight.
+    let border = rule;
+    stroke_clipped(
+        surface,
+        Rect {
+            x: board.x - border,
+            y: board.y - border,
+            width: board.width + border * 2,
+            height: board.height + border * 2,
+        },
+        tone::INK,
+        border,
+        clip,
+    );
+    let cell = board.width / 8;
+    for row in 0..8 {
+        for column in 0..8 {
+            if (row + column) % 2 == 1 {
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: board.x + column * cell,
+                        y: board.y + row * cell,
+                        width: cell,
+                        height: cell,
+                    },
+                    tone::SURFACE,
+                    clip,
+                );
+            }
+        }
+    }
+    // Draw each shared rule once. Outlining every square makes the interior
+    // lines twice as thick as the perimeter and lets later fills erase parts
+    // of the frame under alternating squares.
+    for division in 0..=8 {
+        let x = if division == 8 {
+            board.x + board.width - rule
+        } else {
+            board.x + division * cell
+        };
+        let y = if division == 8 {
+            board.y + board.height - rule
+        } else {
+            board.y + division * cell
+        };
+        fill_clipped(
+            surface,
+            Rect {
+                x,
+                y: board.y,
+                width: rule,
+                height: board.height,
+            },
+            tone::RULE,
+            clip,
+        );
+        fill_clipped(
+            surface,
+            Rect {
+                x: board.x,
+                y,
+                width: board.width,
+                height: rule,
+            },
+            tone::RULE,
+            clip,
+        );
+    }
+    let line = FontSize::Caption.line_height();
+    for index in 0..8 {
+        let file = (b'a' + index as u8) as char;
+        let rank = (b'8' - index as u8) as char;
+        let file = file.to_string();
+        let rank = rank.to_string();
+        let file_width = measure_text(&file, FontSize::Caption).0;
+        let rank_width = measure_text(&rank, FontSize::Caption).0;
+        let file_x = board.x + index * cell + (cell - file_width) / 2;
+        let rank_y = board.y + index * cell + (cell - line) / 2;
+        let top_y = outer.y + (board.y - outer.y - line) / 2;
+        let bottom_y =
+            board.y + board.height + (outer.y + outer.height - board.y - board.height - line) / 2;
+        draw_text(
+            surface,
+            &file,
+            file_x,
+            top_y,
+            FontSize::Caption,
+            tone::INK,
+            clip,
+        );
+        draw_text(
+            surface,
+            &file,
+            file_x,
+            bottom_y,
+            FontSize::Caption,
+            tone::INK,
+            clip,
+        );
+        let left_x = outer.x + (board.x - outer.x - rank_width) / 2;
+        let right_x = board.x
+            + board.width
+            + (outer.x + outer.width - board.x - board.width - rank_width) / 2;
+        draw_text(
+            surface,
+            &rank,
+            left_x,
+            rank_y,
+            FontSize::Caption,
+            tone::INK,
+            clip,
+        );
+        draw_text(
+            surface,
+            &rank,
+            right_x,
+            rank_y,
+            FontSize::Caption,
+            tone::INK,
+            clip,
+        );
     }
 }
 

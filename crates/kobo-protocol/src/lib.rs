@@ -1191,6 +1191,8 @@ pub enum DeviceRequest {
     KeepAwake { seconds: u32 },
     /// Release a wake hold early.
     AllowSleep,
+    /// Suspend now, keeping the current e-ink frame visible until wake.
+    SleepNow,
     /// Ask to be woken again after this many seconds.
     ScheduleWake { seconds: u32 },
     /// Cancel a pending scheduled wake.
@@ -2795,6 +2797,7 @@ fn encode_device_request(
         DeviceRequest::ReleaseWifi => fixed_device_request(output, 3, 0),
         DeviceRequest::KeepAwake { seconds } => fixed_device_request(output, 4, *seconds),
         DeviceRequest::AllowSleep => fixed_device_request(output, 5, 0),
+        DeviceRequest::SleepNow => output.push(52),
         DeviceRequest::ScheduleWake { seconds } => fixed_device_request(output, 6, *seconds),
         DeviceRequest::CancelWake => fixed_device_request(output, 7, 0),
         DeviceRequest::SetFrontlight { percent } => {
@@ -3183,6 +3186,7 @@ fn decode_device_request(
             seconds: reader.u32()?,
         }),
         5 => fixed_argument(reader, 0).map(|()| DeviceRequest::AllowSleep),
+        52 => Ok(DeviceRequest::SleepNow),
         6 => Ok(DeviceRequest::ScheduleWake {
             seconds: reader.u32()?,
         }),

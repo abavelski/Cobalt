@@ -36,6 +36,15 @@ struct BuiltinApp {
 
 const MANAGED_BUILTINS: &[BuiltinApp] = &[
     BuiltinApp {
+        id: "eink-chess",
+        title: "E-Ink Chess",
+        label: "Chess",
+        summary: "Move pieces freely on a touch chessboard.",
+        version: "0.1.0",
+        glyph: Glyph::Grid,
+        capabilities: &[],
+    },
+    BuiltinApp {
         id: "audiobook",
         title: "Audiobook Studio",
         label: "Audiobooks",

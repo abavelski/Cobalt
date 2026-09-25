@@ -30,7 +30,10 @@
 //! A curated set is the same choice the rest of this UI layer makes everywhere.
 
 use crate::{Glyph, Percent, Signal};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
+mod sashite;
 mod tabler;
 
 /// The side of the box every icon is designed in.
@@ -214,6 +217,59 @@ pub struct Coverage {
     pub size: i32,
     /// Row-major, `size * size` values, 0 for untouched and 255 for solid.
     pub alpha: Vec<u8>,
+}
+
+/// Layered chess art preserves the light and dark fills of the source SVGs.
+pub struct ColoredCoverage {
+    pub size: i32,
+    pub tone: Vec<u8>,
+    pub alpha: Vec<u8>,
+}
+
+/// Cache the twelve rasterized pieces at each requested board size. A move
+/// redraws the whole board, so rerasterizing every path would slow each tap.
+pub fn chess_coverage(glyph: Glyph, size: i32) -> Option<Arc<ColoredCoverage>> {
+    if size <= 0 || sashite::layers(glyph).is_none() {
+        return None;
+    }
+    static CACHE: OnceLock<Mutex<HashMap<(Glyph, i32), Arc<ColoredCoverage>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(image) = cache
+        .lock()
+        .expect("chess raster cache")
+        .get(&(glyph, size))
+    {
+        return Some(Arc::clone(image));
+    }
+    let count = usize::try_from(size * size).expect("positive chess raster dimensions");
+    let mut image = ColoredCoverage {
+        size,
+        tone: vec![0; count],
+        alpha: vec![0; count],
+    };
+    for layer in sashite::layers(glyph)? {
+        let coverage = render(&[Shape::Fill(Path::from_commands(layer.commands))], size);
+        for (index, &source_alpha) in coverage.alpha.iter().enumerate() {
+            if source_alpha == 0 {
+                continue;
+            }
+            let source = u32::from(source_alpha);
+            let old_alpha = u32::from(image.alpha[index]);
+            let remaining = 255 - source;
+            let next_alpha = source + (old_alpha * remaining + 127) / 255;
+            let old_ink = u32::from(image.tone[index]) * old_alpha * remaining / 255;
+            let next_ink = u32::from(layer.tone) * source + old_ink;
+            image.alpha[index] = u8::try_from(next_alpha).unwrap_or(255);
+            image.tone[index] =
+                u8::try_from((next_ink + next_alpha / 2) / next_alpha).unwrap_or(255);
+        }
+    }
+    let image = Arc::new(image);
+    cache
+        .lock()
+        .expect("chess raster cache")
+        .insert((glyph, size), Arc::clone(&image));
+    Some(image)
 }
 
 impl Coverage {
@@ -561,24 +617,18 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
-    let width = if matches!(
-        glyph,
-        Glyph::ChessBlackKing
-            | Glyph::ChessBlackQueen
-            | Glyph::ChessBlackRook
-            | Glyph::ChessBlackBishop
-            | Glyph::ChessBlackKnight
-            | Glyph::ChessBlackPawn
-    ) {
-        WEIGHT * 2
-    } else {
-        WEIGHT
-    };
+    if let Some(layers) = sashite::layers(glyph) {
+        return layers
+            .iter()
+            .filter(|layer| layer.tone == 0)
+            .map(|layer| Shape::Fill(Path::from_commands(layer.commands)))
+            .collect();
+    }
     tabler::outline(glyph)
         .iter()
         .map(|commands| Shape::Stroke {
             path: Path::from_commands(commands),
-            width,
+            width: WEIGHT,
         })
         .collect()
 }
@@ -787,7 +837,7 @@ pub fn bluetooth() -> Vec<Shape> {
 
 #[cfg(test)]
 mod tests {
-    use super::{back_arrow, render, shapes, Path, Shape, UNITS};
+    use super::{back_arrow, chess_coverage, render, shapes, Path, Shape, UNITS};
     use crate::{Glyph, Signal};
 
     const EVERY: [Glyph; Glyph::ALL.len()] = Glyph::ALL;
@@ -798,6 +848,16 @@ mod tests {
             .iter()
             .filter(|&&value| value > 0)
             .count()
+    }
+
+    fn chess_ink(glyph: Glyph, size: i32) -> usize {
+        let image = chess_coverage(glyph, size).expect("Sashité chess artwork");
+        image
+            .tone
+            .iter()
+            .zip(&image.alpha)
+            .map(|(&tone, &alpha)| usize::from(255 - tone) * usize::from(alpha) / 255)
+            .sum()
     }
 
     /// The vertical extent of the ink, in design units.
@@ -827,7 +887,7 @@ mod tests {
             (Glyph::ChessWhiteKnight, Glyph::ChessBlackKnight),
             (Glyph::ChessWhitePawn, Glyph::ChessBlackPawn),
         ] {
-            assert!(inked(black, 96) > inked(white, 96));
+            assert!(chess_ink(black, 96) > chess_ink(white, 96));
         }
     }
 
@@ -911,8 +971,8 @@ mod tests {
 
     #[test]
     fn chess_pieces_are_vector_art_with_distinct_sides() {
-        let white = inked(Glyph::ChessWhiteQueen, 64);
-        let black = inked(Glyph::ChessBlackQueen, 64);
+        let white = chess_ink(Glyph::ChessWhiteQueen, 64);
+        let black = chess_ink(Glyph::ChessBlackQueen, 64);
         assert!(white > 200, "white queen is too faint: {white}");
         assert!(black > white, "black queen must read darker than white");
         for glyph in [
