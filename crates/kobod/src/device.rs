@@ -3351,7 +3351,13 @@ fn kernel_suspend_conditions(
     source: kobo_hal::power_source::Observation,
     controller: kobo_profile::FramebufferController,
 ) -> kobod::power::Conditions {
-    let mut conditions = power_conditions(apps, touch, source);
+    kernel_suspend_power_policy(power_conditions(apps, touch, source), controller)
+}
+
+fn kernel_suspend_power_policy(
+    mut conditions: kobod::power::Conditions,
+    controller: kobo_profile::FramebufferController,
+) -> kobod::power::Conditions {
     if !kernel_suspend_requires_unplugged(controller) {
         conditions.charging = false;
         conditions.usb_attached = false;
@@ -6334,6 +6340,31 @@ mod tests {
 mod hosting_tests {
     use super::coldest;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn imx6_kernel_suspend_ignores_generic_external_power_refusal() {
+        let base = kobod::power::Conditions {
+            charging: true,
+            usb_attached: true,
+            keep_awake_until: 0,
+            terminal_open: false,
+            input_quiet: true,
+            panel_idle: true,
+            tasks_idle: true,
+        };
+
+        let imx6 = super::kernel_suspend_power_policy(
+            base,
+            kobo_profile::FramebufferController::MxcfbV2,
+        );
+        assert!(!imx6.charging);
+        assert!(!imx6.usb_attached);
+
+        let mtk =
+            super::kernel_suspend_power_policy(base, kobo_profile::FramebufferController::Hwtcon);
+        assert!(mtk.charging);
+        assert!(mtk.usb_attached);
+    }
 
     /// Reads better than a bare bool at every call site below.
     const BUSY: bool = true;
