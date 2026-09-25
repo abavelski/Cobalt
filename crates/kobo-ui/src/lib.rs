@@ -1246,6 +1246,49 @@ mod responsive_profile_tests {
     }
 
     #[test]
+    fn flipped_chess_frame_follows_algebraic_display_order() {
+        let cells = (0..64)
+            .map(|display| {
+                let square = 63 - display;
+                let file = (b'a' + (square % 8) as u8) as char;
+                let rank = (b'8' - (square / 8) as u8) as char;
+                let cell = Cell::new(
+                    ActionId(u32::try_from(square + 1).unwrap()),
+                    format!("{file}{rank}"),
+                );
+                if display == 0 {
+                    cell.with_glyph(Glyph::ChessWhiteRook)
+                } else {
+                    cell
+                }
+            })
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 8,
+                square: true,
+                cells,
+            }],
+        );
+        let layout = screen.layout();
+        assert!(layout.nodes.iter().any(|node| {
+            matches!(
+                node.kind,
+                LayoutKind::ChessFrame {
+                    flipped: true,
+                    ..
+                }
+            )
+        }));
+        assert_eq!(chess_coordinate(0, true), ('h', '1'));
+        assert_eq!(chess_coordinate(7, true), ('a', '8'));
+        assert_eq!(chess_coordinate(0, false), ('a', '8'));
+        assert_eq!(chess_coordinate(7, false), ('h', '1'));
+    }
+
+    #[test]
     fn chess_frame_keeps_coordinates_outside_playable_squares() {
         for (name, metrics) in panels() {
             let cells = (0..64)
@@ -1280,7 +1323,7 @@ mod responsive_profile_tests {
                 .iter()
                 .find(|node| matches!(node.kind, LayoutKind::ChessFrame { .. }))
                 .expect("chess frame");
-            let LayoutKind::ChessFrame { board } = frame.kind else {
+            let LayoutKind::ChessFrame { board, .. } = frame.kind else {
                 unreachable!()
             };
             let squares: Vec<_> = diagnostics
@@ -6143,6 +6186,7 @@ pub enum LayoutKind {
     /// Frame and rank/file coordinates around an eight by eight chess grid.
     ChessFrame {
         board: Rect,
+        flipped: bool,
     },
     /// One cell of a table, drawn in the body face.
     TableCell,
@@ -8519,6 +8563,7 @@ fn layout_node(
                         )
                     )
                 });
+            let chess_flipped = chess_board && chess_grid_is_flipped(cells);
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
             let columns = if legacy_typography() || *square {
@@ -8632,7 +8677,10 @@ fn layout_node(
                     height: 0,
                 },
                 kind: if chess_board {
-                    LayoutKind::ChessFrame { board: chess_inner }
+                    LayoutKind::ChessFrame {
+                        board: chess_inner,
+                        flipped: chess_flipped,
+                    }
                 } else if backgammon_board {
                     LayoutKind::BackgammonBoard
                 } else if morris_board {
@@ -8808,6 +8856,7 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                         }
+                        None if chess_board => (),
                         None if style == CellStyle::CrosswordBlock => (),
                         None => {
                             // A letter in a crossword square is set the size a
@@ -14658,8 +14707,8 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
-            LayoutKind::ChessFrame { board } => {
-                draw_chess_frame(surface, node.rect, board, metrics, clip);
+            LayoutKind::ChessFrame { board, flipped } => {
+                draw_chess_frame(surface, node.rect, board, flipped, metrics, clip);
             }
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
@@ -16079,10 +16128,38 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
     }
 }
 
+fn chess_square_prefix(label: &str) -> Option<(u8, u8)> {
+    let bytes = label.as_bytes();
+    if bytes.len() < 2 || !(b'a'..=b'h').contains(&bytes[0]) || !(b'1'..=b'8').contains(&bytes[1]) {
+        return None;
+    }
+    Some((bytes[0], bytes[1]))
+}
+
+fn chess_grid_is_flipped(cells: &[Cell]) -> bool {
+    matches!(
+        (
+            cells.first().and_then(|cell| chess_square_prefix(&cell.label)),
+            cells.last().and_then(|cell| chess_square_prefix(&cell.label)),
+        ),
+        (Some((b'h', b'1')), Some((b'a', b'8')))
+    )
+}
+
+fn chess_coordinate(index: i32, flipped: bool) -> (char, char) {
+    let index = u8::try_from(index.clamp(0, 7)).unwrap_or(0);
+    if flipped {
+        ((b'h' - index) as char, (b'1' + index) as char)
+    } else {
+        ((b'a' + index) as char, (b'8' - index) as char)
+    }
+}
+
 fn draw_chess_frame(
     surface: &mut Surface,
     outer: Rect,
     board: Rect,
+    flipped: bool,
     metrics: &DisplayMetrics,
     clip: Rect,
 ) {
@@ -16161,8 +16238,7 @@ fn draw_chess_frame(
     }
     let line = FontSize::Caption.line_height();
     for index in 0..8 {
-        let file = (b'a' + index as u8) as char;
-        let rank = (b'8' - index as u8) as char;
+        let (file, rank) = chess_coordinate(index, flipped);
         let file = file.to_string();
         let rank = rank.to_string();
         let file_width = measure_text(&file, FontSize::Caption).0;
