@@ -1866,6 +1866,15 @@ fn host_applications(
                             "kernel suspend: mem write returned after {} ms",
                             suspend_started.elapsed().as_millis()
                         ));
+                        if let Err(error) = fs::write(SUSPEND_FLAG, "0") {
+                            trace(&format!("kernel resume flag failed: {error}"));
+                        } else if outcome.is_ok() {
+                            // Match Kobo's established resume sequence: the
+                            // state-extended write re-arms input/wake plumbing,
+                            // which needs a brief moment before userspace
+                            // starts changing visible hardware again.
+                            thread::sleep(Duration::from_millis(100));
+                        }
                         if let (Some(light), Some(level)) = (&frontlight, light_before) {
                             if level > 0 {
                                 match light.set(level) {
@@ -3266,10 +3275,6 @@ fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Resu
         Effect::Resume { generation, reason } => {
             if let Err(error) = fs::write(SUSPEND_FLAG, "0") {
                 trace(&format!("kernel resume flag failed: {error}"));
-            } else if reason == kobod::power::WakeReason::PowerButton {
-                // KOReader and Nickel both give the i.MX6 power glue a moment
-                // to re-arm wake/input state after clearing state-extended.
-                thread::sleep(Duration::from_millis(100));
             }
             for app in apps.iter_mut() {
                 app.tasks.resume();
