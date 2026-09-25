@@ -1,16 +1,12 @@
 mod board;
 
 use board::{Board, Color, Piece, PieceKind};
-use kobo_sdk::{
-    action_id, ActionId, Context, DeviceRequest, DeviceResult, Glyph, KoboApp, Screen,
-    ScreenBuilder, StoreResult,
-};
+use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
 use std::process::ExitCode;
 
 const SIDE: usize = 8;
 const CELLS: usize = SIDE * SIDE;
 const RESET: &str = "reset";
-const SLEEP: &str = "sleep";
 const EXIT: &str = "exit";
 const POSITIONS_FILE: &str = "positions.fen";
 const EXAMPLE_POSITIONS: &str = include_str!("positions.fen");
@@ -22,7 +18,6 @@ struct ChessBoardApp {
     position_index: usize,
     file_error: Option<String>,
     sleeping: bool,
-    sleep_error: Option<String>,
 }
 
 impl ChessBoardApp {
@@ -78,13 +73,11 @@ impl ChessBoardApp {
             )
         };
         let mut screen = ScreenBuilder::new("chessboard").top_bar(title);
-        if let Some(error) = self.sleep_error.as_ref().or(self.file_error.as_ref()) {
+        if let Some(error) = self.file_error.as_ref() {
             screen = screen.text(error.clone());
         }
         if !self.sleeping {
-            screen = screen
-                .top_bar_action(RESET, "Reset")
-                .top_bar_action(SLEEP, "Sleep");
+            screen = screen.top_bar_action(RESET, "Reset");
         }
         screen
             .board_with_selection(SIDE as u8, cells)
@@ -164,14 +157,6 @@ impl KoboApp for ChessBoardApp {
             return;
         }
 
-        if action == action_id(SLEEP) {
-            self.sleep_error = None;
-            self.sleeping = true;
-            self.show(context);
-            context.device().sleep_now();
-            return;
-        }
-
         for square in 0..CELLS {
             if action == action_id(&square_action(square)) {
                 // Avoid an e-ink refresh when a tap changed nothing.
@@ -187,27 +172,14 @@ impl KoboApp for ChessBoardApp {
         self.turn_position(context, forward);
     }
 
-    fn on_resume(&mut self, context: &mut Context) {
-        self.sleeping = false;
+    fn on_suspend(&mut self, context: &mut Context) {
+        self.sleeping = true;
         self.show(context);
     }
 
-    fn on_device_result(
-        &mut self,
-        context: &mut Context,
-        request: DeviceRequest,
-        result: DeviceResult,
-    ) {
-        if request == DeviceRequest::SleepNow && result != DeviceResult::Done {
-            self.sleeping = false;
-            let reason = match result {
-                DeviceResult::Denied(reason) => reason.describe(),
-                DeviceResult::Failed(error) => error.describe(),
-                _ => "the request was not completed",
-            };
-            self.sleep_error = Some(format!("Could not sleep: {reason}."));
-            self.show(context);
-        }
+    fn on_resume(&mut self, context: &mut Context) {
+        self.sleeping = false;
+        self.show(context);
     }
 }
 

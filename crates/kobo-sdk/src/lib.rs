@@ -2338,11 +2338,6 @@ impl Device<'_> {
         self.request(DeviceRequest::AllowSleep);
     }
 
-    /// Requests sleep while leaving the current e-ink screen on the panel.
-    pub fn sleep_now(&mut self) {
-        self.request(DeviceRequest::SleepNow);
-    }
-
     /// Asks to be woken after `delay` to refresh content.
     ///
     /// The runtime coalesces wakes across applications and enforces a minimum

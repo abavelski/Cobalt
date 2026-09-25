@@ -57,6 +57,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
+const SUSPEND_FLAG: &str = "/sys/power/state-extended";
+const SUSPEND_STATE: &str = "/sys/power/state";
+const SUSPEND_SETTLE: Duration = Duration::from_secs(2);
+const WAKE_BUTTON_GRACE: Duration = Duration::from_secs(1);
 /// Where named credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
@@ -1799,6 +1803,8 @@ fn host_applications(
         let mut pending_updates: Option<crate::autoupdate::Plan> = None;
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
+        let mut pending_suspend: Option<(u64, Instant)> = None;
+        let mut wake_button_grace_until: Option<Instant> = None;
         let mut consume_wake_touch = false;
 
         loop {
@@ -1809,6 +1815,62 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            if let Some((generation, due)) = pending_suspend {
+                if power.state() != kobod::power::State::Ready {
+                    pending_suspend = None;
+                    let _ = fs::write(SUSPEND_FLAG, "0");
+                } else if now >= due {
+                    pending_suspend = None;
+                    let source = kobo_hal::power_source::read();
+                    if source.external != Some(false) || source.usb == Some(true) {
+                        if let Some(effect) = power.abort(kobod::power::Refusal::Charging) {
+                            apply_power_effect(&mut apps, effect)?;
+                        }
+                    } else if display.finish_pending().is_err() {
+                        if let Some(effect) = power.abort(kobod::power::Refusal::Panel) {
+                            apply_power_effect(&mut apps, effect)?;
+                        }
+                    } else if power.entered(generation) {
+                        // Kobo's suspend flag needs time to settle before mem.
+                        // Writing mem blocks until the physical key wakes us.
+                        let light_before = frontlight.as_ref().and_then(|light| light.percent());
+                        if let (Some(light), Some(level)) = (&frontlight, light_before) {
+                            if level > 0 {
+                                match light.set(0) {
+                                    Ok(set) => services.observe_frontlight(set),
+                                    Err(error) => {
+                                        trace(&format!("sleep frontlight off failed: {error}"))
+                                    }
+                                }
+                            }
+                        }
+                        let outcome = fs::write(SUSPEND_STATE, "mem");
+                        let _ = fs::write(SUSPEND_FLAG, "0");
+                        if let (Some(light), Some(level)) = (&frontlight, light_before) {
+                            if level > 0 {
+                                match light.set(level) {
+                                    Ok(set) => services.observe_frontlight(set),
+                                    Err(error) => {
+                                        trace(&format!("wake frontlight restore failed: {error}"))
+                                    }
+                                }
+                            }
+                        }
+                        let effect = if let Err(error) = outcome {
+                            trace(&format!("kernel suspend failed: {error}"));
+                            power.abort(kobod::power::Refusal::Busy)
+                        } else {
+                            wake_button_grace_until = Some(Instant::now() + WAKE_BUTTON_GRACE);
+                            power.wake(kobod::power::WakeReason::PowerButton)
+                        };
+                        if let Some(effect) = effect {
+                            apply_power_effect(&mut apps, effect)?;
+                        }
+                        last_activity = Instant::now();
+                        continue;
+                    }
+                }
+            }
             if release_due.is_some_and(|(deadline, _)| now >= deadline) {
                 let (_, damage) = release_due.take().expect("release deadline existed");
                 panel.paint_feedback(display, whole_screen, &surface, damage)?;
@@ -1925,6 +1987,9 @@ fn host_applications(
                 )
                 .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
+                }))
+                .min(pending_suspend.map_or(BEAT_INTERVAL, |(_, deadline)| {
+                    deadline.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
                 Ok(Event::Stopping(number)) => {
@@ -2036,9 +2101,12 @@ fn host_applications(
                             button: gpio::Button::Power,
                             pressed,
                         } => {
-                            match power_button
-                                .event(pressed, power.state() != kobod::power::State::Awake)
-                            {
+                            match power_button.event(
+                                pressed,
+                                power.state() != kobod::power::State::Awake
+                                    || wake_button_grace_until
+                                        .is_some_and(|until| Instant::now() < until),
+                            ) {
                                 Some(kobod::power::ButtonAction::Wake) => {
                                     if let Some(effect) =
                                         power.wake(kobod::power::WakeReason::PowerButton)
@@ -2047,6 +2115,14 @@ fn host_applications(
                                     }
                                 }
                                 Some(kobod::power::ButtonAction::Sleep) => {
+                                    let supported = Path::new(SUSPEND_FLAG).exists()
+                                        && fs::read_to_string(SUSPEND_STATE).is_ok_and(|states| {
+                                            states.split_whitespace().any(|state| state == "mem")
+                                        });
+                                    if !supported {
+                                        trace("power button sleep unavailable on this kernel");
+                                        continue;
+                                    }
                                     match begin_power(
                                         &mut power,
                                         &apps,
@@ -2062,7 +2138,7 @@ fn host_applications(
                                             apply_power_effect(&mut apps, effect)?;
                                         }
                                         Err(reason) => {
-                                            trace(&format!("power handback deferred: {reason:?}"));
+                                            trace(&format!("power sleep deferred: {reason:?}"));
                                         }
                                     }
                                 }
@@ -2531,37 +2607,6 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(
                                     kobo_protocol::DenyReason::NotDeclared,
                                 )
-                            } else if matches!(request, kobo_protocol::DeviceRequest::SleepNow) {
-                                if !fs::read_to_string("/sys/power/state").is_ok_and(|states| {
-                                    states.split_whitespace().any(|s| s == "mem")
-                                }) {
-                                    kobo_protocol::DeviceResult::Denied(
-                                        kobo_protocol::DenyReason::Unsupported,
-                                    )
-                                } else {
-                                    match begin_power(
-                                        &mut power,
-                                        &apps,
-                                        navigation_millis,
-                                        kobod::power::SleepReason::Owner,
-                                        power_conditions(
-                                            &apps,
-                                            touch,
-                                            kobo_hal::power_source::read(),
-                                        ),
-                                    ) {
-                                        Ok(effect) => {
-                                            apply_power_effect(&mut apps, effect)?;
-                                            kobo_protocol::DeviceResult::Done
-                                        }
-                                        Err(reason) => {
-                                            trace(&format!("owner sleep refused: {reason:?}"));
-                                            kobo_protocol::DeviceResult::Denied(
-                                                kobo_protocol::DenyReason::PolicyRejected,
-                                            )
-                                        }
-                                    }
-                                }
                             } else if let Some(result) = kobo_policy::credentials::handle_install(
                                 Path::new(SECRETS),
                                 &apps[index].name,
@@ -3133,23 +3178,16 @@ fn host_applications(
                 if conditions.tasks_idle {
                     conditions.panel_idle = display.finish_pending().is_ok();
                 }
-                let owner_sleep = power.reason() == Some(kobod::power::SleepReason::Owner);
-                if let Some(effect) = power.poll(navigation_millis, conditions, owner_sleep) {
+                let button_sleep = power.reason() == Some(kobod::power::SleepReason::PowerButton);
+                if let Some(effect) = power.poll(navigation_millis, conditions, button_sleep) {
                     if let kobod::power::Effect::Enter { generation } = effect {
-                        if power.entered(generation) {
-                            // E-ink retains the finished frame without power. The
-                            // kernel returns here after the power button wakes it.
-                            let outcome = fs::write("/sys/power/state", "mem");
-                            let resume = if outcome.is_ok() {
-                                power.wake(kobod::power::WakeReason::PowerButton)
-                            } else {
-                                trace(&format!("owner sleep failed: {:?}", outcome.err()));
-                                power.abort(kobod::power::Refusal::Busy)
-                            };
-                            if let Some(resume) = resume {
-                                apply_power_effect(&mut apps, resume)?;
+                        if let Err(error) = fs::write(SUSPEND_FLAG, "1") {
+                            trace(&format!("kernel suspend flag failed: {error}"));
+                            if let Some(effect) = power.abort(kobod::power::Refusal::Busy) {
+                                apply_power_effect(&mut apps, effect)?;
                             }
-                            last_activity = Instant::now();
+                        } else {
+                            pending_suspend = Some((generation, Instant::now() + SUSPEND_SETTLE));
                         }
                     } else if apply_power_effect(&mut apps, effect)? {
                         return Ok(finish(
@@ -3170,8 +3208,8 @@ fn host_applications(
     result
 }
 
-/// Device entry remains reader handback until a kernel/profile combination is
-/// physically validated. The same SDK barrier still protects outstanding saves.
+/// Application saves and display updates finish before either reader handback
+/// or the physical button's kernel suspend path.
 fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Result<bool, String> {
     use kobod::power::Effect;
     trace(&format!("power effect {effect:?}"));
@@ -3185,6 +3223,7 @@ fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Resu
             }
         }
         Effect::Resume { generation, reason } => {
+            let _ = fs::write(SUSPEND_FLAG, "0");
             for app in apps.iter_mut() {
                 app.tasks.resume();
             }
@@ -3373,7 +3412,6 @@ fn repaint(
 /// identities even while both travel over the same bounded device channel.
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
     match request {
-        kobo_protocol::DeviceRequest::SleepNow => app == "eink-chess",
         kobo_protocol::DeviceRequest::Update { .. }
         | kobo_protocol::DeviceRequest::ReadAutoUpdate
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
