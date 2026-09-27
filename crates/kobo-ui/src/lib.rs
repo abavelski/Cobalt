@@ -5800,6 +5800,8 @@ pub enum Glyph {
     /// before this existed, and a single dot the width of a full stop is not
     /// an emblem anyone reads at arm's length.
     Mill,
+    /// Opposing vertical arrows: exchange the upper and lower sides.
+    SwapVertical,
 }
 
 impl Glyph {
@@ -5810,7 +5812,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 70] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5880,6 +5882,7 @@ impl Glyph {
         Self::Backspace,
         Self::Shift,
         Self::Mill,
+        Self::SwapVertical,
     ];
 }
 

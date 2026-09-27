@@ -73,6 +73,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Plus => PLUS,
         Glyph::Headphones => HEADPHONES,
         Glyph::Minus => MINUS,
+        Glyph::SwapVertical => SWAP_VERTICAL,
         Glyph::ChessWhiteKing => CHESS_WHITE_KING,
         Glyph::ChessWhiteQueen => CHESS_WHITE_QUEEN,
         Glyph::ChessWhiteRook => CHESS_WHITE_ROOK,
@@ -1026,6 +1027,22 @@ static HEADPHONES: &[&[Cmd]] = &[
 
 /// `minus` from Tabler Icons.
 static MINUS: &[&[Cmd]] = &[&[Cmd::Move(208, 500), Cmd::Line(792, 500)]];
+
+/// `arrows-up-down` from Tabler Icons.
+static SWAP_VERTICAL: &[&[Cmd]] = &[
+    &[Cmd::Move(292, 125), Cmd::Line(292, 875)],
+    &[
+        Cmd::Move(417, 250),
+        Cmd::Line(292, 125),
+        Cmd::Line(167, 250),
+    ],
+    &[
+        Cmd::Move(833, 750),
+        Cmd::Line(708, 875),
+        Cmd::Line(583, 750),
+    ],
+    &[Cmd::Move(708, 875), Cmd::Line(708, 125)],
+];
 
 /// `chess-king` from Tabler Icons.
 static CHESS_WHITE_KING: &[&[Cmd]] = &[

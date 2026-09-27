@@ -197,19 +197,9 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
         );
     }
     out.push_str(
-        "        Glyph::ChessWhiteKing\n\
-         | Glyph::ChessWhiteQueen\n\
-         | Glyph::ChessWhiteRook\n\
-         | Glyph::ChessWhiteBishop\n\
-         | Glyph::ChessWhiteKnight\n\
-         | Glyph::ChessWhitePawn\n\
-         | Glyph::ChessBlackKing\n\
-         | Glyph::ChessBlackQueen\n\
-         | Glyph::ChessBlackRook\n\
-         | Glyph::ChessBlackBishop\n\
-         | Glyph::ChessBlackKnight\n\
-         | Glyph::ChessBlackPawn\n\
-         | Glyph::BlackDisc\n\
+        "        // Board pieces are discs and rings rather than line art, so they are\n\
+         // filled in `game_piece_shapes` instead of stroked from an outline.\n\
+         Glyph::BlackDisc\n\
          | Glyph::WhiteDisc\n\
          | Glyph::BlackDraughtsKing\n\
          | Glyph::WhiteDraughtsKing\n\

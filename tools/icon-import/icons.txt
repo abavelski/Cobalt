@@ -54,6 +54,7 @@ Battery             battery
 Plus                plus
 Headphones          headphones
 Minus               minus
+SwapVertical        arrows-up-down
 ChessWhiteKing      chess-king
 ChessWhiteQueen     chess-queen
 ChessWhiteRook      chess-rook
