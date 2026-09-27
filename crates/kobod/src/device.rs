@@ -60,6 +60,7 @@ const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
 const SUSPEND_FLAG: &str = "/sys/power/state-extended";
 const SUSPEND_STATE: &str = "/sys/power/state";
 const SUSPEND_SETTLE: Duration = Duration::from_secs(2);
+const SUSPEND_MAX_RETRIES: u8 = 4;
 const WAKE_BUTTON_GRACE: Duration = Duration::from_secs(1);
 /// Where named credentials live.
 ///
@@ -1803,7 +1804,8 @@ fn host_applications(
         let mut pending_updates: Option<crate::autoupdate::Plan> = None;
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
-        let mut pending_suspend: Option<(u64, Instant)> = None;
+        let mut pending_suspend: Option<(u64, Instant, u8)> = None;
+        let mut suspend_light_before: Option<u8> = None;
         let mut wake_button_grace_until: Option<Instant> = None;
         let mut consume_wake_touch = false;
 
@@ -1815,7 +1817,15 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
-            if let Some((generation, due)) = pending_suspend {
+            if power.state() == kobod::power::State::Awake {
+                if let (Some(light), Some(level)) = (&frontlight, suspend_light_before.take()) {
+                    match light.set(level) {
+                        Ok(set) => services.observe_frontlight(set),
+                        Err(error) => trace(&format!("wake frontlight restore failed: {error}")),
+                    }
+                }
+            }
+            if let Some((generation, due, retries)) = pending_suspend {
                 if power.state() != kobod::power::State::Ready {
                     pending_suspend = None;
                     let _ = fs::write(SUSPEND_FLAG, "0");
@@ -1839,7 +1849,11 @@ fn host_applications(
                     } else if power.entered(generation) {
                         // Kobo's suspend flag needs time to settle before mem.
                         // Writing mem blocks until the physical key wakes us.
-                        let light_before = frontlight.as_ref().and_then(|light| light.percent());
+                        if suspend_light_before.is_none() {
+                            suspend_light_before =
+                                frontlight.as_ref().and_then(|light| light.percent());
+                        }
+                        let light_before = suspend_light_before;
                         if let (Some(light), Some(level)) = (&frontlight, light_before) {
                             if level > 0 {
                                 match light.set(0) {
@@ -1851,7 +1865,9 @@ fn host_applications(
                             }
                         }
                         match Command::new("sync").status() {
-                            Ok(status) if status.success() => trace("kernel suspend: filesystems synced"),
+                            Ok(status) if status.success() => {
+                                trace("kernel suspend: filesystems synced")
+                            }
                             Ok(status) => trace(&format!(
                                 "kernel suspend: sync exited with {status}; continuing"
                             )),
@@ -1875,6 +1891,34 @@ fn host_applications(
                             // starts changing visible hardware again.
                             thread::sleep(Duration::from_millis(100));
                         }
+                        if let Err(error) = &outcome {
+                            // The i.MX6 EPDC returns -ENOENT while VEE is
+                            // settling, and the freezer may report -EBUSY for
+                            // a recent GPIO wake event. Keep the sleeping frame
+                            // and saved frontlight while retrying entry.
+                            if suspend_entry_retryable(error, retries)
+                                && power.retry_entry(generation)
+                            {
+                                match fs::write(SUSPEND_FLAG, "1") {
+                                    Ok(()) => {
+                                        trace(&format!(
+                                            "kernel suspend failed: {error}; retry {}/{} in 2 seconds",
+                                            retries + 1, SUSPEND_MAX_RETRIES
+                                        ));
+                                        pending_suspend = Some((
+                                            generation,
+                                            Instant::now() + SUSPEND_SETTLE,
+                                            retries + 1,
+                                        ));
+                                        continue;
+                                    }
+                                    Err(error) => {
+                                        trace(&format!("kernel suspend retry flag failed: {error}"))
+                                    }
+                                }
+                            }
+                        }
+                        let light_before = suspend_light_before.take();
                         if let (Some(light), Some(level)) = (&frontlight, light_before) {
                             if level > 0 {
                                 match light.set(level) {
@@ -2017,7 +2061,7 @@ fn host_applications(
                 .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }))
-                .min(pending_suspend.map_or(BEAT_INTERVAL, |(_, deadline)| {
+                .min(pending_suspend.map_or(BEAT_INTERVAL, |(_, deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
@@ -3200,9 +3244,7 @@ fn host_applications(
                 let source = kobo_hal::power_source::read();
                 let button_sleep = power.reason() == Some(kobod::power::SleepReason::PowerButton);
                 let powered_kernel_suspend = button_sleep
-                    && !kernel_suspend_requires_unplugged(
-                        display.profile().framebuffer_controller,
-                    );
+                    && !kernel_suspend_requires_unplugged(display.profile().framebuffer_controller);
                 let wake = if powered_kernel_suspend {
                     None
                 } else if source.usb == Some(true) {
@@ -3237,7 +3279,8 @@ fn host_applications(
                                 apply_power_effect(&mut apps, effect)?;
                             }
                         } else {
-                            pending_suspend = Some((generation, Instant::now() + SUSPEND_SETTLE));
+                            pending_suspend =
+                                Some((generation, Instant::now() + SUSPEND_SETTLE, 0));
                         }
                     } else if apply_power_effect(&mut apps, effect)? {
                         return Ok(finish(
@@ -3330,6 +3373,10 @@ fn power_conditions(
     }
 }
 
+fn suspend_entry_retryable(error: &std::io::Error, retries: u8) -> bool {
+    retries < SUSPEND_MAX_RETRIES && matches!(error.raw_os_error(), Some(2 | 11 | 16))
+}
+
 /// MediaTek Kobo kernels are known to hang if suspend is attempted while
 /// externally powered. The i.MX6 Kobo path used by Libra H2O does not have
 /// that restriction; Nickel/KOReader suspend those devices with the normal
@@ -3339,9 +3386,7 @@ fn power_conditions(
 /// power_source::Observation intentionally treats Battery/Full as external
 /// power. That is conservative for generic policy, but it must not turn a
 /// fully charged, unplugged i.MX6 reader into a device that can never sleep.
-fn kernel_suspend_requires_unplugged(
-    controller: kobo_profile::FramebufferController,
-) -> bool {
+fn kernel_suspend_requires_unplugged(controller: kobo_profile::FramebufferController) -> bool {
     matches!(controller, kobo_profile::FramebufferController::Hwtcon)
 }
 
@@ -6338,6 +6383,26 @@ mod tests {
 
 #[cfg(test)]
 mod hosting_tests {
+    #[test]
+    fn suspend_retry_is_bounded_and_only_for_transient_driver_errors() {
+        for errno in [2, 11, 16] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            assert!(super::suspend_entry_retryable(&error, 0));
+            assert!(super::suspend_entry_retryable(
+                &error,
+                super::SUSPEND_MAX_RETRIES - 1
+            ));
+            assert!(!super::suspend_entry_retryable(
+                &error,
+                super::SUSPEND_MAX_RETRIES
+            ));
+        }
+        assert!(!super::suspend_entry_retryable(
+            &std::io::Error::from_raw_os_error(13),
+            0
+        ));
+    }
+
     use super::coldest;
     use std::time::{Duration, Instant};
 
@@ -6353,10 +6418,8 @@ mod hosting_tests {
             tasks_idle: true,
         };
 
-        let imx6 = super::kernel_suspend_power_policy(
-            base,
-            kobo_profile::FramebufferController::MxcfbV2,
-        );
+        let imx6 =
+            super::kernel_suspend_power_policy(base, kobo_profile::FramebufferController::MxcfbV2);
         assert!(!imx6.charging);
         assert!(!imx6.usb_attached);
 

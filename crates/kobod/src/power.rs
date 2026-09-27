@@ -217,6 +217,16 @@ impl Power {
         true
     }
 
+    /// A failed kernel entry may be retried without resuming the apps or
+    /// repeating their save barrier. Cancellation invalidates this generation.
+    pub fn retry_entry(&mut self, generation: u64) -> bool {
+        if self.state != State::Suspended || generation != self.generation {
+            return false;
+        }
+        self.state = State::Ready;
+        true
+    }
+
     pub fn wake(&mut self, reason: WakeReason) -> Option<Effect> {
         if matches!(self.state, State::Awake | State::Handback) {
             return None;
@@ -283,6 +293,28 @@ mod tests {
         assert_eq!(button.event(false, false), None);
         assert_eq!(button.event(true, false), None);
         assert_eq!(button.event(false, false), Some(ButtonAction::Sleep));
+    }
+
+    #[test]
+    fn failed_entry_retries_same_barrier_and_cancellation_invalidates_retry() {
+        let mut power = Power::default();
+        power
+            .begin(&[1], 0, SleepReason::PowerButton, quiet())
+            .unwrap();
+        let generation = power.generation();
+        power.acknowledge(1, generation, true);
+        assert_eq!(
+            power.poll(1, quiet(), true),
+            Some(Effect::Enter { generation })
+        );
+        assert!(power.entered(generation));
+        assert!(!power.retry_entry(generation + 1));
+        assert!(power.retry_entry(generation));
+        assert_eq!(power.state(), State::Ready);
+        assert!(power.entered(generation));
+        power.wake(WakeReason::PowerButton);
+        assert!(!power.retry_entry(generation));
+        assert!(!power.entered(generation));
     }
 
     fn quiet() -> Conditions {
