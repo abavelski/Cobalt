@@ -1005,6 +1005,8 @@ name = "kobo-eink-chess"
 version = "0.1.0"
 dependencies = [
  "kobo-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

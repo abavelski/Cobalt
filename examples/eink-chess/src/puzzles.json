@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "title": "Lichess sample puzzles",
+  "source": "https://database.lichess.org/#puzzles",
+  "license": "CC0-1.0",
+  "puzzles": [
+    {
+      "id": "lichess-001cr",
+      "fen": "8/3B2pp/p5k1/6P1/1ppp1K2/8/1P6/8 w - - 0 39",
+      "description": "Find mate in one.",
+      "solution": [
+        "d7e8"
+      ],
+      "source": "https://lichess.org/training/001cr"
+    },
+    {
+      "id": "lichess-000rZ",
+      "fen": "2kr1b1r/p1p2pp1/2pqN3/7p/6n1/2NPB3/PPP2PPP/R2Q1RK1 b - - 0 13",
+      "description": "Find mate in one.",
+      "solution": [
+        "d6h2"
+      ],
+      "source": "https://lichess.org/training/000rZ"
+    },
+    {
+      "id": "lichess-000hf",
+      "fen": "r1bq3r/pp1nbkp1/2p1p2p/8/2BP4/1PN3P1/P3QP1P/3R1RK1 w - - 0 20",
+      "description": "Find mate in two.",
+      "solution": [
+        "e2e6",
+        "f7f8",
+        "e6f7"
+      ],
+      "source": "https://lichess.org/training/000hf"
+    },
+    {
+      "id": "lichess-006HV",
+      "fen": "1r6/5k2/2Q1pNp1/p5Pp/1p2P2P/2P4R/KP3P2/3q4 b - - 0 31",
+      "description": "Find mate in two.",
+      "solution": [
+        "b4b3",
+        "a2a3",
+        "d1a1"
+      ],
+      "source": "https://lichess.org/training/006HV"
+    },
+    {
+      "id": "lichess-00008",
+      "fen": "r6k/pp2r2p/4Rp1Q/3p4/8/1N1P2b1/PqP3PP/7K w - - 0 25",
+      "description": "Find the best continuation.",
+      "solution": [
+        "e6e7",
+        "b2b1",
+        "b3c1",
+        "b1c1",
+        "h6c1"
+      ],
+      "source": "https://lichess.org/training/00008"
+    },
+    {
+      "id": "lichess-0000D",
+      "fen": "5rk1/1p3ppp/pq1Q1b2/8/8/1P3N2/P4PPP/3R2K1 b - - 3 27",
+      "description": "Find the best continuation.",
+      "solution": [
+        "f8d8",
+        "d6d8",
+        "f6d8"
+      ],
+      "source": "https://lichess.org/training/0000D"
+    },
+    {
+      "id": "lichess-000Sa",
+      "fen": "2Q2bk1/5p1p/p5p1/2p3P1/4B3/7P/qPr2P2/2K4R w - - 0 33",
+      "description": "Find the best continuation.",
+      "solution": [
+        "e4c2",
+        "a2a1",
+        "c2b1"
+      ],
+      "source": "https://lichess.org/training/000Sa"
+    },
+    {
+      "id": "lichess-0008Q",
+      "fen": "8/5R2/1p2P3/p4r2/P6p/1P3Pk1/4K3/8 b - - 2 64",
+      "description": "Find the best continuation.",
+      "solution": [
+        "f5e5",
+        "e2f1",
+        "e5e6"
+      ],
+      "source": "https://lichess.org/training/0008Q"
+    },
+    {
+      "id": "lichess-00143",
+      "fen": "r4rk1/5ppp/1np2q2/p1b5/2p1B3/P7/1P3PPP/R1BQ1RK1 w - - 2 18",
+      "description": "Find the best continuation.",
+      "solution": [
+        "d1h5",
+        "h7h6",
+        "h5c5"
+      ],
+      "source": "https://lichess.org/training/00143"
+    },
+    {
+      "id": "lichess-000Pw",
+      "fen": "6k1/5p1p/4p3/4q3/3n4/2Q3P1/PP1N1P1P/6K1 b - - 3 37",
+      "description": "Find the best continuation.",
+      "solution": [
+        "d4e2",
+        "g1f1",
+        "e2c3"
+      ],
+      "source": "https://lichess.org/training/000Pw"
+    }
+  ]
+}
