@@ -1273,15 +1273,10 @@ mod responsive_profile_tests {
             }],
         );
         let layout = screen.layout();
-        assert!(layout.nodes.iter().any(|node| {
-            matches!(
-                node.kind,
-                LayoutKind::ChessFrame {
-                    flipped: true,
-                    ..
-                }
-            )
-        }));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| { matches!(node.kind, LayoutKind::ChessFrame { flipped: true, .. }) }));
         assert_eq!(chess_coordinate(0, true), ('h', '1'));
         assert_eq!(chess_coordinate(7, true), ('a', '8'));
         assert_eq!(chess_coordinate(0, false), ('a', '8'));
@@ -8046,17 +8041,19 @@ fn layout_node(
             if slots.is_empty() {
                 return y;
             }
-            // Compact icon toolbars share the playable board's edges rather
-            // than the wider page margins or its coordinate gutters.
+            // Compact icon toolbars align with the board's outer frame,
+            // including the coordinate gutters and border.
             let icon_slot = |slot: &BandSlot| {
                 matches!(slot.nodes.as_slice(), [Node::Grid { square: false, cells, .. }]
                     if !cells.is_empty() && cells.iter().all(|cell| cell.glyph.is_some()))
             };
             let board = if slots.iter().any(icon_slot)
-                && slots.iter().all(|slot| slot.nodes.is_empty() || icon_slot(slot))
+                && slots
+                    .iter()
+                    .all(|slot| slot.nodes.is_empty() || icon_slot(slot))
             {
                 layout.nodes.iter().rev().find_map(|node| match node.kind {
-                    LayoutKind::ChessFrame { board, .. } => Some(board),
+                    LayoutKind::ChessFrame { .. } => Some(node.rect),
                     _ => None,
                 })
             } else {
@@ -14799,10 +14796,11 @@ fn render_all_with_selected_font(
             // Nothing at all: the picture is the whole of it.
             LayoutKind::Cell(_, CellStyle::Plain, _) => {}
             LayoutKind::Cell(_, CellStyle::Outlined, _) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
-                    tone::INK,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::RULE,
                     (metrics.button_border() / 2).max(1),
                     clip,
                 );
@@ -16179,8 +16177,12 @@ fn chess_square_prefix(label: &str) -> Option<(u8, u8)> {
 fn chess_grid_is_flipped(cells: &[Cell]) -> bool {
     matches!(
         (
-            cells.first().and_then(|cell| chess_square_prefix(&cell.label)),
-            cells.last().and_then(|cell| chess_square_prefix(&cell.label)),
+            cells
+                .first()
+                .and_then(|cell| chess_square_prefix(&cell.label)),
+            cells
+                .last()
+                .and_then(|cell| chess_square_prefix(&cell.label)),
         ),
         (Some((b'h', b'1')), Some((b'a', b'8')))
     )
