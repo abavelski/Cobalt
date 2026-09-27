@@ -2757,6 +2757,8 @@ pub enum CellStyle {
     /// finger's width of paper between them are already separate, and putting
     /// each on a grey slab turns a quiet row into four boxes.
     Plain,
+    /// A square icon button with a thin outline, used below a chessboard.
+    Outlined,
     /// A recessed hardware pad: rounded square, thick ink bezel, paper face.
     ///
     /// Fifteen of these in three rows of five is a command deck. Empty pads
@@ -8044,6 +8046,23 @@ fn layout_node(
             if slots.is_empty() {
                 return y;
             }
+            // Compact icon toolbars share the playable board's edges rather
+            // than the wider page margins or its coordinate gutters.
+            let icon_slot = |slot: &BandSlot| {
+                matches!(slot.nodes.as_slice(), [Node::Grid { square: false, cells, .. }]
+                    if !cells.is_empty() && cells.iter().all(|cell| cell.glyph.is_some()))
+            };
+            let board = if slots.iter().any(icon_slot)
+                && slots.iter().all(|slot| slot.nodes.is_empty() || icon_slot(slot))
+            {
+                layout.nodes.iter().rev().find_map(|node| match node.kind {
+                    LayoutKind::ChessFrame { board, .. } => Some(board),
+                    _ => None,
+                })
+            } else {
+                None
+            };
+            let (x, width) = board.map_or((x, width), |board| (board.x, board.width));
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -8653,7 +8672,16 @@ fn layout_node(
             } else if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
-                (metrics.touch_target_default(), CellStyle::Plain)
+                let style = if layout
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node.kind, LayoutKind::ChessFrame { .. }))
+                {
+                    CellStyle::Outlined
+                } else {
+                    CellStyle::Plain
+                };
+                (metrics.touch_target_default(), style)
             } else {
                 (key_height, CellStyle::Key)
             };
@@ -14770,6 +14798,15 @@ fn render_all_with_selected_font(
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
             LayoutKind::Cell(_, CellStyle::Plain, _) => {}
+            LayoutKind::Cell(_, CellStyle::Outlined, _) => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    (metrics.button_border() / 2).max(1),
+                    clip,
+                );
+            }
             LayoutKind::Cell(_, CellStyle::Key, selected) => {
                 fill_rounded_clipped(
                     surface,
