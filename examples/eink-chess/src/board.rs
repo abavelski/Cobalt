@@ -25,6 +25,21 @@ pub struct Piece {
     pub kind: PieceKind,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TapResult {
+    NoChange,
+    SelectionChanged,
+    Moved {
+        from: usize,
+        to: usize,
+    },
+    Promotion {
+        from: usize,
+        to: usize,
+        color: Color,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Board {
     squares: [Option<Piece>; 64],
@@ -213,60 +228,126 @@ impl Board {
         self.selected
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
     pub fn piece_at(&self, square: usize) -> Option<Piece> {
         self.squares.get(square).copied().flatten()
     }
 
-    /// Apply one tap. Returns true only when visible state changed.
+    /// Move a piece directly without applying chess legality.
+    ///
+    /// This is used for stored puzzle replies as well as by the tap state
+    /// machine. Moving onto an occupied square replaces the existing piece.
+    pub fn move_piece(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.squares.len() || to >= self.squares.len() || from == to {
+            return false;
+        }
+        let Some(piece) = self.squares[from].take() else {
+            return false;
+        };
+        self.squares[to] = Some(piece);
+        self.selected = None;
+        true
+    }
+
+    /// Promote a pawn atomically without applying other chess legality.
+    pub fn promote_pawn(&mut self, from: usize, to: usize, kind: PieceKind) -> bool {
+        if from >= self.squares.len()
+            || to >= self.squares.len()
+            || from == to
+            || matches!(kind, PieceKind::Pawn | PieceKind::King)
+        {
+            return false;
+        }
+
+        let Some(piece) = self.squares[from] else {
+            return false;
+        };
+        if piece.kind != PieceKind::Pawn || !is_promotion_square(piece.color, to) {
+            return false;
+        }
+
+        self.squares[from] = None;
+        self.squares[to] = Some(Piece {
+            color: piece.color,
+            kind,
+        });
+        self.selected = None;
+        true
+    }
+
+    /// Apply one tap and report whether it only changed selection, completed a
+    /// move, or staged a promotion that still needs a piece choice.
     ///
     /// - Tap an occupied square to select it.
     /// - Tap it again to deselect it.
     /// - Tap any other square to move the selected piece there.
+    /// - A pawn reaching its last rank is not moved until promotion is chosen.
     /// - A move may replace another piece, just like picking pieces up by hand.
-    pub fn tap(&mut self, square: usize) -> bool {
+    pub fn tap(&mut self, square: usize) -> TapResult {
         if square >= self.squares.len() {
-            return false;
+            return TapResult::NoChange;
         }
 
         match self.selected {
             None => {
                 if self.squares[square].is_some() {
                     self.selected = Some(square);
-                    true
+                    TapResult::SelectionChanged
                 } else {
-                    false
+                    TapResult::NoChange
                 }
             }
             Some(from) if from == square => {
                 self.selected = None;
-                true
+                TapResult::SelectionChanged
             }
             Some(from) => {
-                let Some(piece) = self.squares[from].take() else {
+                let Some(piece) = self.squares[from] else {
                     // Defensive recovery: selection should always contain a piece.
                     self.selected = None;
-                    return true;
+                    return TapResult::SelectionChanged;
                 };
-                self.squares[square] = Some(piece);
-                self.selected = None;
-                true
+                if piece.kind == PieceKind::Pawn && is_promotion_square(piece.color, square) {
+                    self.selected = None;
+                    return TapResult::Promotion {
+                        from,
+                        to: square,
+                        color: piece.color,
+                    };
+                }
+                if self.move_piece(from, square) {
+                    TapResult::Moved { from, to: square }
+                } else {
+                    self.selected = None;
+                    TapResult::SelectionChanged
+                }
             }
         }
     }
 }
 
+const fn is_promotion_square(color: Color, square: usize) -> bool {
+    match color {
+        Color::White => square < 8,
+        Color::Black => square >= 56 && square < 64,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Board, Color, Piece, PieceKind};
+    use super::{Board, Color, Piece, PieceKind, TapResult};
 
     #[test]
     fn a_piece_can_be_selected_and_moved_anywhere() {
         let mut board = Board::default();
 
-        assert!(board.tap(52)); // e2
+        assert_eq!(board.tap(52), TapResult::SelectionChanged); // e2
         assert_eq!(board.selected(), Some(52));
 
-        assert!(board.tap(36)); // e4
+        assert_eq!(board.tap(36), TapResult::Moved { from: 52, to: 36 }); // e4
         assert!(board.piece_at(52).is_none());
         assert_eq!(
             board.piece_at(36),
@@ -281,16 +362,16 @@ mod tests {
     #[test]
     fn tapping_empty_square_first_does_nothing() {
         let mut board = Board::default();
-        assert!(!board.tap(32));
+        assert_eq!(board.tap(32), TapResult::NoChange);
         assert_eq!(board.selected(), None);
     }
 
     #[test]
-    fn tapping_selected_piece_again_deselects_it() {
+    fn tapping_selected_piece_again_only_changes_selection() {
         let mut board = Board::default();
 
-        assert!(board.tap(57)); // b1 knight
-        assert!(board.tap(57));
+        assert_eq!(board.tap(57), TapResult::SelectionChanged); // b1 knight
+        assert_eq!(board.tap(57), TapResult::SelectionChanged);
 
         assert_eq!(board.selected(), None);
         assert_eq!(
@@ -306,8 +387,8 @@ mod tests {
     fn moving_onto_an_occupied_square_replaces_that_piece() {
         let mut board = Board::default();
 
-        assert!(board.tap(56)); // a1 white rook
-        assert!(board.tap(0)); // a8 black rook
+        assert_eq!(board.tap(56), TapResult::SelectionChanged); // a1 white rook
+        assert_eq!(board.tap(0), TapResult::Moved { from: 56, to: 0 }); // a8 black rook
 
         assert_eq!(
             board.piece_at(0),
@@ -317,6 +398,107 @@ mod tests {
             })
         );
         assert!(board.piece_at(56).is_none());
+    }
+
+    #[test]
+    fn a_piece_can_be_moved_directly_for_stored_replies() {
+        let mut board = Board::default();
+
+        assert!(board.move_piece(13, 5)); // f7 -> f8
+        assert!(board.piece_at(13).is_none());
+        assert_eq!(
+            board.piece_at(5),
+            Some(Piece {
+                color: Color::Black,
+                kind: PieceKind::Pawn,
+            })
+        );
+    }
+
+    #[test]
+    fn white_and_black_promotion_are_staged_without_moving_the_pawn() {
+        let mut white = Board::from_fen("7k/P7/8/8/8/8/8/K7 w - - 0 1").unwrap();
+        assert_eq!(white.tap(8), TapResult::SelectionChanged); // a7
+        assert_eq!(
+            white.tap(0),
+            TapResult::Promotion {
+                from: 8,
+                to: 0,
+                color: Color::White,
+            }
+        );
+        assert_eq!(
+            white.piece_at(8),
+            Some(Piece {
+                color: Color::White,
+                kind: PieceKind::Pawn,
+            })
+        );
+        assert!(white.piece_at(0).is_none());
+
+        let mut black = Board::from_fen("k7/8/8/8/8/8/p7/7K b - - 0 1").unwrap();
+        assert_eq!(black.tap(48), TapResult::SelectionChanged); // a2
+        assert_eq!(
+            black.tap(56),
+            TapResult::Promotion {
+                from: 48,
+                to: 56,
+                color: Color::Black,
+            }
+        );
+        assert_eq!(
+            black.piece_at(48),
+            Some(Piece {
+                color: Color::Black,
+                kind: PieceKind::Pawn,
+            })
+        );
+        assert!(black.piece_at(56).is_none());
+    }
+
+    #[test]
+    fn non_pawn_move_to_last_rank_does_not_trigger_promotion() {
+        let mut board = Board::from_fen("7k/R7/8/8/8/8/8/K7 w - - 0 1").unwrap();
+
+        assert_eq!(board.tap(8), TapResult::SelectionChanged);
+        assert_eq!(board.tap(0), TapResult::Moved { from: 8, to: 0 });
+        assert_eq!(
+            board.piece_at(0),
+            Some(Piece {
+                color: Color::White,
+                kind: PieceKind::Rook,
+            })
+        );
+    }
+
+    #[test]
+    fn promote_pawn_supports_all_standard_pieces() {
+        for kind in [
+            PieceKind::Queen,
+            PieceKind::Rook,
+            PieceKind::Bishop,
+            PieceKind::Knight,
+        ] {
+            let mut board = Board::from_fen("7k/P7/8/8/8/8/8/K7 w - - 0 1").unwrap();
+            assert!(board.promote_pawn(8, 0, kind));
+            assert!(board.piece_at(8).is_none());
+            assert_eq!(
+                board.piece_at(0),
+                Some(Piece {
+                    color: Color::White,
+                    kind,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn promotion_rejects_invalid_piece_or_destination() {
+        let mut board = Board::from_fen("7k/P7/8/8/8/8/8/K7 w - - 0 1").unwrap();
+
+        assert!(!board.promote_pawn(8, 16, PieceKind::Queen));
+        assert!(!board.promote_pawn(8, 0, PieceKind::King));
+        assert!(!board.promote_pawn(8, 0, PieceKind::Pawn));
     }
 
     #[test]

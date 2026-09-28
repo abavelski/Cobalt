@@ -1,4 +1,4 @@
-//! Versioned puzzle files. The FEN active color is the side solving the puzzle.
+//! Versioned puzzle collections. The FEN active color is the side solving the puzzle.
 
 use crate::board::{Board, Color};
 use serde::Deserialize;
@@ -7,9 +7,11 @@ use std::collections::HashSet;
 pub const MAX_PUZZLE_FILE_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
-struct PuzzleFile {
+pub struct PuzzleCollection {
     version: u32,
-    puzzles: Vec<Puzzle>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub puzzles: Vec<Puzzle>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,12 +33,12 @@ impl Puzzle {
     }
 }
 
-pub fn parse_puzzle_file(contents: &[u8]) -> Result<Vec<Puzzle>, String> {
+pub fn parse_puzzle_file(contents: &[u8]) -> Result<PuzzleCollection, String> {
     if contents.len() > MAX_PUZZLE_FILE_BYTES {
-        return Err("puzzles.json must be at most 256 KiB.".into());
+        return Err("Puzzle file must be at most 256 KiB.".into());
     }
-    let file: PuzzleFile = serde_json::from_slice(contents)
-        .map_err(|error| format!("Invalid puzzles.json: {error}"))?;
+    let mut file: PuzzleCollection = serde_json::from_slice(contents)
+        .map_err(|error| format!("Invalid puzzle file: {error}"))?;
     if file.version != 1 {
         return Err(format!(
             "Unsupported puzzle file version {}; expected 1.",
@@ -44,8 +46,14 @@ pub fn parse_puzzle_file(contents: &[u8]) -> Result<Vec<Puzzle>, String> {
         ));
     }
     if file.puzzles.is_empty() {
-        return Err("No puzzles found. Add at least one puzzle to puzzles.json.".into());
+        return Err("No puzzles found. Add at least one puzzle to the file.".into());
     }
+    file.title = file
+        .title
+        .take()
+        .map(|title| title.trim().to_owned())
+        .filter(|title| !title.is_empty());
+
     let mut ids = HashSet::new();
     for (index, puzzle) in file.puzzles.iter().enumerate() {
         let name = format!("Puzzle {} ({})", index + 1, puzzle.id);
@@ -67,7 +75,7 @@ pub fn parse_puzzle_file(contents: &[u8]) -> Result<Vec<Puzzle>, String> {
             }
         }
     }
-    Ok(file.puzzles)
+    Ok(file)
 }
 
 fn is_uci_move(movement: &str) -> bool {
@@ -93,25 +101,33 @@ mod tests {
         }]})
     }
 
-    fn parse(value: serde_json::Value) -> Result<Vec<Puzzle>, String> {
+    fn parse(value: serde_json::Value) -> Result<PuzzleCollection, String> {
         parse_puzzle_file(&serde_json::to_vec(&value).unwrap())
     }
 
     #[test]
-    fn accepts_optional_description_and_derives_turn_from_fen() {
-        let puzzles = parse(sample()).unwrap();
-        assert!(puzzles[0].description.is_none());
-        assert_eq!(puzzles[0].side_to_move(), Color::White);
+    fn accepts_collection_title_optional_description_and_derives_turn_from_fen() {
+        let collection = parse(sample()).unwrap();
+        assert!(collection.title.is_none());
+        assert!(collection.puzzles[0].description.is_none());
+        assert_eq!(collection.puzzles[0].side_to_move(), Color::White);
+
         let mut value = sample();
+        value["title"] = json!("  Endgames  ");
         value["puzzles"][0]["fen"] = json!("8/8/8/8/8/5kq1/8/7K b - - 0 1");
         value["puzzles"][0]["description"] = json!("Find a mate in one.");
         value["puzzles"][0]["solution"] = json!(["g3g2"]);
-        let puzzles = parse(value).unwrap();
-        assert_eq!(puzzles[0].side_to_move(), Color::Black);
+        let collection = parse(value).unwrap();
+        assert_eq!(collection.title.as_deref(), Some("Endgames"));
+        assert_eq!(collection.puzzles[0].side_to_move(), Color::Black);
         assert_eq!(
-            puzzles[0].description.as_deref(),
+            collection.puzzles[0].description.as_deref(),
             Some("Find a mate in one.")
         );
+
+        let mut value = sample();
+        value["title"] = json!("   ");
+        assert!(parse(value).unwrap().title.is_none());
     }
 
     #[test]

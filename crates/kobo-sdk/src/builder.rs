@@ -2030,17 +2030,38 @@ impl ScreenBuilder {
     /// reader could be told out loud, which is why the picture has to be one
     /// nobody needs the word to understand.
     #[must_use]
-    pub fn controls<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    pub fn controls<I, N, L>(self, columns: u8, cells: I) -> Self
     where
         I: IntoIterator<Item = (N, L, Glyph)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        self.controls_with_selection(
+            columns,
+            cells
+                .into_iter()
+                .map(|(name, label, glyph)| (name, label, glyph, false)),
+        )
+    }
+
+    /// Icon controls with an optional selected state for persistent toggles.
+    /// The selected icon keeps the same target and border as its peers.
+    #[must_use]
+    pub fn controls_with_selection<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph, bool)>,
         N: AsRef<str>,
         L: Into<String>,
     {
         let id = self.next_id();
         let mut source = cells.into_iter();
         let mut cells = Vec::new();
-        for (name, label, glyph) in source.by_ref().take(MAX_CELLS) {
-            cells.push(Cell::new(self.register(name.as_ref()), label).with_glyph(glyph));
+        for (name, label, glyph, selected) in source.by_ref().take(MAX_CELLS) {
+            cells.push(
+                Cell::new(self.register(name.as_ref()), label)
+                    .with_glyph(glyph)
+                    .with_selected(selected),
+            );
         }
         if source.next().is_some() {
             self.warn_limit(id, "grid cells", MAX_CELLS);

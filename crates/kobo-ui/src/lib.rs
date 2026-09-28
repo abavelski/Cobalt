@@ -8836,7 +8836,11 @@ fn layout_node(
                                 // out as three empty squares.
                                 kind: LayoutKind::InlineGlyph(
                                     glyph,
-                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                    cell.selected
+                                        && matches!(
+                                            style,
+                                            CellStyle::CrosswordBlock | CellStyle::Outlined
+                                        ),
                                 ),
                                 text_lines: vec![cell.label.clone()],
                             });
@@ -8879,7 +8883,11 @@ fn layout_node(
                                 // out as three empty squares.
                                 kind: LayoutKind::InlineGlyph(
                                     glyph,
-                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                    cell.selected
+                                        && matches!(
+                                            style,
+                                            CellStyle::CrosswordBlock | CellStyle::Outlined
+                                        ),
                                 ),
                                 text_lines: vec![cell.label.clone()],
                             });
@@ -14795,7 +14803,16 @@ fn render_all_with_selected_font(
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
             LayoutKind::Cell(_, CellStyle::Plain, _) => {}
-            LayoutKind::Cell(_, CellStyle::Outlined, _) => {
+            LayoutKind::Cell(_, CellStyle::Outlined, selected) => {
+                if selected {
+                    fill_rounded_clipped(
+                        surface,
+                        node.rect,
+                        metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                        tone::MUTED,
+                        clip,
+                    );
+                }
                 stroke_rounded_clipped(
                     surface,
                     node.rect,

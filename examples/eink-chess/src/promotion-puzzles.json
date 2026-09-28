@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "title": "Promotion test puzzles",
+  "puzzles": [
+    {
+      "id": "promotion-white-queen",
+      "fen": "7k/P7/8/8/8/8/8/K7 w - - 0 1",
+      "description": "Promote the a-pawn to a queen.",
+      "solution": ["a7a8q"]
+    },
+    {
+      "id": "promotion-white-knight",
+      "fen": "7k/1P6/8/8/8/8/8/K7 w - - 0 1",
+      "description": "Underpromote the b-pawn to a knight.",
+      "solution": ["b7b8n"]
+    },
+    {
+      "id": "promotion-black-rook",
+      "fen": "k7/8/8/8/8/8/7p/K7 b - - 0 1",
+      "description": "Underpromote the h-pawn to a rook.",
+      "solution": ["h2h1r"]
+    },
+    {
+      "id": "promotion-auto-reply",
+      "fen": "7k/8/8/8/8/8/p6R/7K w - - 0 1",
+      "description": "Move the rook; Black's reply promotes automatically.",
+      "solution": ["h2h3", "a2a1q", "h3h8"]
+    }
+  ]
+}
