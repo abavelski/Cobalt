@@ -402,6 +402,15 @@ impl ChessBoardApp {
 
     fn screen(&self) -> Screen {
         let selected = self.board.selected();
+        let feedback_glyph = if self.mode == BoardMode::Solution {
+            match self.solution_feedback {
+                Some(SolutionFeedback::Complete) => Some(Glyph::ThumbUp),
+                Some(SolutionFeedback::Wrong) => Some(Glyph::ThumbDown),
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let cells = (0..CELLS).map(|display_square| {
             let square = board_square(display_square, self.flipped);
@@ -409,7 +418,11 @@ impl ChessBoardApp {
             (
                 square_action(square),
                 square_label(square, piece),
-                piece.map(piece_glyph),
+                if display_square == 27 {
+                    feedback_glyph.or_else(|| piece.map(piece_glyph))
+                } else {
+                    piece.map(piece_glyph)
+                },
                 selected == Some(square),
             )
         });
@@ -456,20 +469,6 @@ impl ChessBoardApp {
                 ],
             );
 
-        if self.mode == BoardMode::Solution {
-            if let Some(feedback) = self.solution_feedback {
-                screen = match feedback {
-                    SolutionFeedback::Correct => screen.banner(BannerLevel::Info, "Correct"),
-                    SolutionFeedback::Wrong => {
-                        screen.banner(BannerLevel::Attention, "Wrong move — try again")
-                    }
-                    SolutionFeedback::Complete => {
-                        screen.banner(BannerLevel::Attention, "Solution complete")
-                    }
-                };
-            }
-        }
-
         if let Some(puzzle) = self.puzzles.get(self.puzzle_index) {
             let status = match self.mode {
                 BoardMode::Solution => match puzzle.side_to_move() {
@@ -478,7 +477,11 @@ impl ChessBoardApp {
                 },
                 BoardMode::FreeBoard => "Free board — moves are not graded",
             };
-            let status = if self.current_is_solved() {
+            let status = if self.mode == BoardMode::Solution
+                && self.solution_feedback == Some(SolutionFeedback::Correct)
+            {
+                format!("{status} · Correct")
+            } else if self.current_is_solved() {
                 format!("{status} · Solved")
             } else {
                 status.to_owned()
@@ -2088,6 +2091,45 @@ mod tests {
                         "puzzle {index}, mode {mode:?}, feedback {feedback:?}: {:?}",
                         diagnostics.issues
                     );
+                    let feedback_mark =
+                        diagnostics.layout.nodes.iter().find(|node| {
+                            matches!(node.kind, kobo_sdk::LayoutKind::ChessFeedback(_))
+                        });
+                    match (mode, feedback) {
+                        (BoardMode::Solution, Some(SolutionFeedback::Wrong)) => {
+                            assert!(matches!(
+                                feedback_mark.map(|node| node.kind),
+                                Some(kobo_sdk::LayoutKind::ChessFeedback(Glyph::ThumbDown))
+                            ));
+                        }
+                        (BoardMode::Solution, Some(SolutionFeedback::Complete)) => {
+                            assert!(matches!(
+                                feedback_mark.map(|node| node.kind),
+                                Some(kobo_sdk::LayoutKind::ChessFeedback(Glyph::ThumbUp))
+                            ));
+                        }
+                        _ => assert!(feedback_mark.is_none()),
+                    }
+                    if let Some(mark) = feedback_mark {
+                        let board = diagnostics
+                            .layout
+                            .nodes
+                            .iter()
+                            .find_map(|node| match node.kind {
+                                kobo_sdk::LayoutKind::ChessFrame { board, .. } => Some(board),
+                                _ => None,
+                            })
+                            .expect("chess board frame");
+                        assert!(
+                            (mark.rect.x + mark.rect.width / 2 - board.x - board.width / 2).abs()
+                                <= 1
+                        );
+                        assert!(
+                            (mark.rect.y + mark.rect.height / 2 - board.y - board.height / 2).abs()
+                                <= 1
+                        );
+                        assert!((mark.rect.width * 4 - board.width).abs() <= 4);
+                    }
                     let rect_for = |action| {
                         diagnostics
                             .layout

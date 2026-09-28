@@ -6227,6 +6227,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Shift => 67,
         Glyph::Mill => 68,
         Glyph::SwapVertical => 69,
+        Glyph::ThumbUp => 70,
+        Glyph::ThumbDown => 71,
     }
 }
 
@@ -6302,6 +6304,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         67 => Glyph::Shift,
         68 => Glyph::Mill,
         69 => Glyph::SwapVertical,
+        70 => Glyph::ThumbUp,
+        71 => Glyph::ThumbDown,
 
         _ => return None,
     })

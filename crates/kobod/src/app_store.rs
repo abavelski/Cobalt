@@ -1317,6 +1317,8 @@ fn glyph(name: &str) -> Option<Glyph> {
         "headphones" => Glyph::Headphones,
         "minus" => Glyph::Minus,
         "swap-vertical" => Glyph::SwapVertical,
+        "thumb-up" => Glyph::ThumbUp,
+        "thumb-down" => Glyph::ThumbDown,
         "chess-white-king" => Glyph::ChessWhiteKing,
         "chess-white-queen" => Glyph::ChessWhiteQueen,
         "chess-white-rook" => Glyph::ChessWhiteRook,

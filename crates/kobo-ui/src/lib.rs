@@ -5799,6 +5799,10 @@ pub enum Glyph {
     Mill,
     /// Opposing vertical arrows: exchange the upper and lower sides.
     SwapVertical,
+    /// Positive result over a chess position.
+    ThumbUp,
+    /// Incorrect attempt over a chess position.
+    ThumbDown,
 }
 
 impl Glyph {
@@ -5809,7 +5813,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 70] = [
+    pub const ALL: [Self; 72] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5880,6 +5884,8 @@ impl Glyph {
         Self::Shift,
         Self::Mill,
         Self::SwapVertical,
+        Self::ThumbUp,
+        Self::ThumbDown,
     ];
 }
 
@@ -6188,6 +6194,8 @@ pub enum LayoutKind {
         board: Rect,
         flipped: bool,
     },
+    /// A result mark laid over the four central chess squares.
+    ChessFeedback(Glyph),
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -8583,6 +8591,14 @@ fn layout_node(
                     )
                 });
             let chess_flipped = chess_board && chess_grid_is_flipped(cells);
+            let chess_feedback = if chess_board {
+                cells.get(27).and_then(|cell| match cell.glyph {
+                    Some(glyph @ (Glyph::ThumbUp | Glyph::ThumbDown)) => Some(glyph),
+                    _ => None,
+                })
+            } else {
+                None
+            };
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
             let columns = if legacy_typography() || *square {
@@ -8859,6 +8875,7 @@ fn layout_node(
                                 });
                             }
                         }
+                        Some(glyph) if chess_feedback == Some(glyph) && position == 27 => {}
                         Some(glyph) => {
                             // Chess pieces use more of their square while
                             // retaining a safe margin from the border.
@@ -8945,6 +8962,20 @@ fn layout_node(
                         }
                     }
                 }
+            }
+            if let Some(glyph) = chess_feedback {
+                let side = cell_width * 2;
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: chess_inner.x + cell_width * 3,
+                        y: chess_inner.y + cell_width * 3,
+                        width: side,
+                        height: side,
+                    },
+                    kind: LayoutKind::ChessFeedback(glyph),
+                    text_lines: Vec::new(),
+                });
             }
             let height = if rows == 0 {
                 0
@@ -14745,6 +14776,31 @@ fn render_all_with_selected_font(
             }
             LayoutKind::ChessFrame { board, flipped } => {
                 draw_chess_frame(surface, node.rect, board, flipped, metrics, clip);
+            }
+            LayoutKind::ChessFeedback(glyph) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                let inset = (node.rect.width / 8).max(1);
+                draw_vector(
+                    surface,
+                    &vector::shapes(glyph),
+                    Rect {
+                        x: node.rect.x + inset,
+                        y: node.rect.y + inset,
+                        width: node.rect.width - inset * 2,
+                        height: node.rect.height - inset * 2,
+                    },
+                    clip,
+                    tone::INK,
+                );
             }
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);

@@ -74,6 +74,8 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Headphones => HEADPHONES,
         Glyph::Minus => MINUS,
         Glyph::SwapVertical => SWAP_VERTICAL,
+        Glyph::ThumbUp => THUMB_UP,
+        Glyph::ThumbDown => THUMB_DOWN,
         Glyph::ChessWhiteKing => CHESS_WHITE_KING,
         Glyph::ChessWhiteQueen => CHESS_WHITE_QUEEN,
         Glyph::ChessWhiteRook => CHESS_WHITE_ROOK,
@@ -1043,6 +1045,52 @@ static SWAP_VERTICAL: &[&[Cmd]] = &[
     ],
     &[Cmd::Move(708, 875), Cmd::Line(708, 125)],
 ];
+
+/// `thumb-up` from Tabler Icons.
+static THUMB_UP: &[&[Cmd]] = &[&[
+    Cmd::Move(292, 458),
+    Cmd::Line(292, 792),
+    Cmd::Cubic(292, 815, 273, 833, 250, 833),
+    Cmd::Line(167, 833),
+    Cmd::Cubic(144, 833, 125, 815, 125, 792),
+    Cmd::Line(125, 500),
+    Cmd::Cubic(125, 477, 144, 458, 167, 458),
+    Cmd::Line(292, 458),
+    Cmd::Cubic(384, 458, 458, 384, 458, 292),
+    Cmd::Line(458, 250),
+    Cmd::Cubic(458, 204, 496, 167, 542, 167),
+    Cmd::Cubic(588, 167, 625, 204, 625, 250),
+    Cmd::Line(625, 458),
+    Cmd::Line(750, 458),
+    Cmd::Cubic(796, 458, 833, 496, 833, 542),
+    Cmd::Line(792, 750),
+    Cmd::Cubic(779, 803, 745, 836, 708, 833),
+    Cmd::Line(417, 833),
+    Cmd::Cubic(348, 833, 292, 777, 292, 708),
+]];
+
+/// `thumb-down` from Tabler Icons.
+static THUMB_DOWN: &[&[Cmd]] = &[&[
+    Cmd::Move(292, 542),
+    Cmd::Line(292, 208),
+    Cmd::Cubic(292, 185, 273, 167, 250, 167),
+    Cmd::Line(167, 167),
+    Cmd::Cubic(144, 167, 125, 185, 125, 208),
+    Cmd::Line(125, 500),
+    Cmd::Cubic(125, 523, 144, 542, 167, 542),
+    Cmd::Line(292, 542),
+    Cmd::Cubic(384, 542, 458, 616, 458, 708),
+    Cmd::Line(458, 750),
+    Cmd::Cubic(458, 796, 496, 833, 542, 833),
+    Cmd::Cubic(588, 833, 625, 796, 625, 750),
+    Cmd::Line(625, 542),
+    Cmd::Line(750, 542),
+    Cmd::Cubic(796, 542, 833, 504, 833, 458),
+    Cmd::Line(792, 250),
+    Cmd::Cubic(779, 197, 745, 164, 708, 167),
+    Cmd::Line(417, 167),
+    Cmd::Cubic(348, 167, 292, 223, 292, 292),
+]];
 
 /// `chess-king` from Tabler Icons.
 static CHESS_WHITE_KING: &[&[Cmd]] = &[

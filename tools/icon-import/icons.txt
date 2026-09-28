@@ -55,6 +55,8 @@ Plus                plus
 Headphones          headphones
 Minus               minus
 SwapVertical        arrows-up-down
+ThumbUp             thumb-up
+ThumbDown           thumb-down
 ChessWhiteKing      chess-king
 ChessWhiteQueen     chess-queen
 ChessWhiteRook      chess-rook
